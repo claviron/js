@@ -76,8 +76,8 @@ You need a compatible stable Rust toolchain, Node.js with npm, and the native
 compiler/linker for your target. Node-API 8 is the addon ABI. There are no npm
 build dependencies to install for the current source tree.
 
-The Rust library uses Claviron `0.2.0-alpha.23` from crates.io with its `orbit`
-and `application` features. It resolves Orbitive `0.6.0` and Continuo `0.10.0`
+The Rust library uses Claviron `0.2.0-alpha.24` from crates.io with its `orbit`
+and `application` features. It resolves Orbitive `0.6.1` and Continuo `0.11.0`
 through Claviron; no sibling source checkouts are required.
 
 For an application-owned addon, enable the Rust library's `napi` feature.
