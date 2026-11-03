@@ -37,7 +37,7 @@ async function fixture(t) {
   for (const file of ["native.js", "scripts/package.js", "scripts/release.js", "scripts/stage-native.js", "scripts/publish.sh", "scripts/sync.js", "scripts/lib/cargo.sh", "scripts/prepare-freebsd.sh", "scripts/freebsd/Dockerfile", "scripts/freebsd/cc"]) {
     await copyFile(join(repository, file), join(root, file));
   }
-  for (const file of ["Cargo.toml", "Cargo.lock", "addon/Cargo.toml", "addon/build.rs", "src/lib.rs", "addon/src/lib.rs", "index.js", "binding.js", "session.js", "framework.js"]) {
+  for (const file of ["Cargo.toml", "Cargo.lock", "addon/Cargo.toml", "addon/build.rs", "src/lib.rs", "addon/src/lib.rs", "index.js", "binding.js", "invoke.js", "session.js", "framework.js"]) {
     await writeFile(join(root, file), "fixture\n");
   }
   const published = JSON.parse(await readFile(join(repository, "package.json"), "utf8"));

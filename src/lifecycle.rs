@@ -11,9 +11,10 @@
 //! ring, as a runner's master would to its workers, so the application stops
 //! as a whole rather than in one process.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
+use tokio_util::sync::CancellationToken;
 
 use claviron::app::fleet::{
     FleetApplicationListSnapshot, FleetApplicationPlacement,
@@ -51,8 +52,9 @@ pub(crate) struct Lifecycle {
     segment: Arc<TransportSegment>,
     name: String,
     lane: u16,
+    state: Mutex<State>,
+    // Keep HTTP admission lock-free; capture() synchronizes generation ownership.
     running: AtomicBool,
-    generation: AtomicU64,
     notify: mpsc::UnboundedSender<ControlEvent>,
 }
 
@@ -76,8 +78,8 @@ impl Lifecycle {
                 segment,
                 name: name.to_owned(),
                 lane,
+                state: Mutex::new(State::initial()),
                 running: AtomicBool::new(true),
-                generation: AtomicU64::new(1),
                 notify,
             }),
             receiver,
@@ -86,6 +88,11 @@ impl Lifecycle {
 
     pub(crate) fn running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn capture(&self) -> Option<Arc<Generation>> {
+        let state = self.state.lock().expect("application generation");
+        state.running.then(|| Arc::clone(&state.generation))
     }
 
     pub(crate) fn id(&self) -> Option<ApplicationId> {
@@ -101,18 +108,18 @@ impl Lifecycle {
         &self,
         action: &str,
     ) {
-        match action {
-            "start" => {
-                if !self.running.swap(true, Ordering::AcqRel) {
-                    self.generation.fetch_add(1, Ordering::AcqRel);
-                }
+        {
+            let mut state = self.state.lock().expect("application generation");
+            if !matches!(action, "start" | "stop" | "restart") {
+                return;
             }
-            "stop" => self.running.store(false, Ordering::Release),
-            "restart" => {
-                self.running.store(true, Ordering::Release);
-                self.generation.fetch_add(1, Ordering::AcqRel);
+            if state.apply(action).is_err() {
+                eprintln!(
+                    "orbit-js: application generation identity exhausted"
+                );
+                return;
             }
-            _ => return,
+            self.running.store(state.running, Ordering::Release);
         }
         let _ = self.notify.send(ControlEvent {
             kind: "lifecycle".to_owned(),
@@ -156,7 +163,10 @@ impl Lifecycle {
     pub(crate) fn publish_state(&self) {
         let Some(id) = self.id() else { return };
         let now = SystemTime::now();
-        let running = self.running();
+        let state = self.state.lock().expect("application generation");
+        let running = state.running;
+        let generation = state.generation.id;
+        drop(state);
         let snapshot = FleetApplicationListSnapshot {
             captured_at: now,
             members_expected: 1,
@@ -175,7 +185,7 @@ impl Lifecycle {
                         ApplicationLifecycle::Stopped
                     },
                     enabled: running,
-                    generation: self.generation.load(Ordering::Acquire),
+                    generation,
                     pool: None,
                     last_error: None,
                     last_error_truncated: false,
@@ -205,3 +215,48 @@ impl Lifecycle {
         }
     }
 }
+
+pub(crate) struct Generation {
+    pub id: u64,
+    pub cancelled: CancellationToken,
+}
+struct State {
+    running: bool,
+    generation: Arc<Generation>,
+}
+impl State {
+    fn initial() -> Self {
+        Self {
+            running: true,
+            generation: Arc::new(Generation {
+                id: 1,
+                cancelled: CancellationToken::new(),
+            }),
+        }
+    }
+    fn apply(
+        &mut self,
+        action: &str,
+    ) -> std::result::Result<(), ()> {
+        let next =
+            if action == "restart" || (action == "start" && !self.running) {
+                Some(self.generation.id.checked_add(1).ok_or(())?)
+            } else {
+                None
+            };
+        if action == "stop" || action == "restart" {
+            self.generation.cancelled.cancel();
+        }
+        if let Some(id) = next {
+            self.generation = Arc::new(Generation {
+                id,
+                cancelled: CancellationToken::new(),
+            });
+        }
+        self.running = action != "stop";
+        Ok(())
+    }
+}
+#[cfg(test)]
+#[path = "../tests/unit/lifecycle.rs"]
+mod tests;

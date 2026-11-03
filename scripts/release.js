@@ -46,7 +46,7 @@ export async function sourceDigest(root = repository) {
     }
   }
   for (const path of ["package.json", "Cargo.toml", "Cargo.lock", "addon/Cargo.toml",
-    "addon/build.rs", "index.js", "binding.js", "session.js", "framework.js", "native.js",
+    "addon/build.rs", "index.js", "binding.js", "invoke.js", "session.js", "framework.js", "native.js",
     "scripts/release.js", "scripts/package.js", "scripts/stage-native.js", "scripts/publish.sh",
     "scripts/prepare-freebsd.sh", "scripts/freebsd/Dockerfile",
     "scripts/freebsd/cc", "scripts/lib/cargo.sh"]) {

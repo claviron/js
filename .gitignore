@@ -14,3 +14,7 @@
 /.hosts
 /.hosts.*
 !/.hosts.example
+
+/.local/
+/.cargo/config.toml
+*.local.sh

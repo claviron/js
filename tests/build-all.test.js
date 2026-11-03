@@ -26,7 +26,9 @@ test("concurrent builders finish independently and collect only matching artifac
   await mkdir(commands);
   await writeFile(events, "");
   execFileSync("git", ["clone", "--quiet", "--no-hardlinks", repository, root]);
-  await copyFile(join(repository, "scripts/build-worker.js"), join(root, "scripts/build-worker.js"));
+  for (const file of ["scripts/build-worker.js", "scripts/release.js", "invoke.js"]) {
+    await copyFile(join(repository, file), join(root, file));
+  }
   await writeFile(join(root, "scripts/publish.sh"), "#!/usr/bin/env bash\nexec node scripts/fixture-prepare.mjs\n");
   await writeFile(join(root, "scripts/fixture-prepare.mjs"), `
 import { createHash } from 'node:crypto';
@@ -38,7 +40,7 @@ await stagePrepared(process.cwd(),'linux-x64-gnu',bytes,{format:1,package:contex
 target:'x86_64-unknown-linux-gnu',profile:'release',cpu:'x86-64',napi:8,source:context.source,
 sha256:createHash('sha256').update(bytes).digest('hex')});
 `);
-  execFileSync("git", ["add", "scripts/publish.sh", "scripts/fixture-prepare.mjs", "scripts/build-worker.js"], { cwd: root });
+  execFileSync("git", ["add", "scripts/publish.sh", "scripts/fixture-prepare.mjs", "scripts/build-worker.js", "scripts/release.js", "invoke.js"], { cwd: root });
   execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=Example", "-c", "user.email=build@example.test",
     "commit", "--quiet", "-m", "Prepare isolated build fixture"], { cwd: root });
   const ssh = join(commands, "ssh");

@@ -5,4 +5,4 @@ import { loadNative } from "./native.js";
 const orbit = createOrbit(loadNative());
 export const join = orbit.join;
 export const serve = orbit.serve;
-export { Link, Session, createOrbit } from "./binding.js";
+export { Link, Session, Invocations, InvokeCall, InvokeReply, createOrbit } from "./binding.js";

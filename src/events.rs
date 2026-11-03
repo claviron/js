@@ -252,6 +252,14 @@ impl Events {
         });
     }
 
+    pub(crate) fn flush(&self) {
+        if let Err(error) = self.bridge.pump() {
+            eprintln!(
+                "orbit-js: pending events could not cross the Link: {error}"
+            );
+        }
+    }
+
     pub(crate) fn stop(&self) {
         for task in self.tasks.lock().expect("event tasks").drain(..) {
             task.abort();

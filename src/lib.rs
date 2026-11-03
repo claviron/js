@@ -17,6 +17,7 @@ mod cells;
 mod error;
 mod events;
 mod http;
+pub mod invoke;
 mod lifecycle;
 mod session;
 use ErrorKind as Status;
@@ -74,6 +75,9 @@ pub struct JoinOptions {
 /// This process's place in a Link fleet.
 pub struct Link {
     segment: Arc<TransportSegment>,
+    fleet: Box<str>,
+    shutdown: tokio_util::sync::CancellationToken,
+    invokes: tokio::sync::Mutex<Vec<Arc<invoke::Invocations>>>,
     bodies: Arc<TransportBodies>,
     lane: u32,
     hold: Mutex<Option<LaneHold>>,
@@ -140,6 +144,9 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     )?;
     Ok(Link {
         segment,
+        fleet: options.fleet.into_boxed_str(),
+        shutdown: tokio_util::sync::CancellationToken::new(),
+        invokes: tokio::sync::Mutex::default(),
         bodies,
         lane: joined.lane as u32,
         hold: Mutex::new(Some(joined.hold)),
@@ -156,6 +163,37 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
 }
 
 impl Link {
+    /// Open an application-owned invoke service on an isolated Link.
+    pub async fn invocations(
+        &self,
+        options: invoke::Options,
+    ) -> Result<Arc<invoke::Invocations>> {
+        // Opening and parent drain share ownership even if shutdown races startup.
+        let mut children = self.invokes.lock().await;
+        if self.shutdown.is_cancelled() {
+            return Err(failure("application is closing"));
+        }
+        if options.fleet.as_ref() == self.fleet.as_ref() {
+            return Err(Error::new(
+                Status::InvalidArg,
+                "invoke fleet must differ from the HTTP/event fleet",
+            ));
+        }
+        let child = invoke::Invocations::open(
+            options,
+            Arc::clone(&self.lifecycle),
+            self.shutdown.child_token(),
+        )
+        .await?;
+        children.push(Arc::clone(&child));
+        if self.shutdown.is_cancelled() {
+            return Err(failure(
+                "application closed while opening invoke Link",
+            ));
+        }
+        Ok(child)
+    }
+
     /// The lane this process took; its address in the fleet.
     pub fn lane(&self) -> u32 {
         self.lane
@@ -225,10 +263,18 @@ impl Link {
     /// taken may still be answered.
     pub async fn close(&self) {
         self.closed.send_replace(true);
-        self.events.stop();
+        self.shutdown.cancel();
         self.receiver.lock().await.take();
         let _ = self.segment.inbox().release_lane(self.lane as usize);
         drop(self.hold.lock().expect("lane hold").take());
+        let children = self.invokes.lock().await.clone();
+        for child in children {
+            if let Err(error) = child.close().await {
+                eprintln!("orbit-js: invoke drain failed: {error}");
+            }
+        }
+        self.events.flush();
+        self.events.stop();
     }
 
     /// The fleet's cells, shared with every instance of this application.

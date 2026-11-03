@@ -64,9 +64,9 @@ prebuilt binary. Keep `export_bindings!()` in your addon to provide the native
 interface that `createOrbit()` expects. A compatible edge must route to the same
 fleet and application name on the same host.
 
-Orbit also exposes application events, shared cells, lifecycle notifications and
-message sessions. Additional native exports can implement application-specific
-work; changing the Orbit transport itself also requires compatibility with the
+Orbit also exposes application events, shared cells, lifecycle notifications,
+message sessions and application-owned invokes. Additional native exports can
+implement application-specific work; changing the Orbit transport itself also requires compatibility with the
 edge. Long-running native work should use an appropriate asynchronous Node-API
 interface so it does not block JavaScript execution.
 
@@ -223,3 +223,37 @@ This requires a rebuilt native addon matching the JavaScript adapter. Message
 sessions retain their separate close and lifecycle handling. Cancellation is
 observable when the edge releases the response reader; network disconnect
 propagation also depends on the HTTP transport and its connection policy.
+
+## Application-owned invoke support (unreleased)
+
+The source adapter now provides `link.invocations(options)`, backed by Claviron's
+existing invoke Client/Route/Driver. Rebuild your native addon together with the
+JavaScript adapter before using it; previously prepared binaries do not expose
+this API. See the [consumer API example](npm/README.md#application-owned-invokes-unreleased)
+for the HTTP/invoke handlers and explicit bounds.
+
+The invoke connection uses a separate fleet from the HTTP/event connection.
+It shares the application's JavaScript process, event loop and existing native
+Tokio runtime. Each connection owns exactly one reader; no extra JavaScript
+engine, framework, private wire protocol or request timeout is introduced.
+Generation retirement uses native cancellation wakes, so it does not depend on
+a JavaScript lifecycle callback running first.
+
+Run the wrapper regressions with `npm test`. For the real Node/Rust acceptance
+harness, install the `orbit` CLI for test-segment cleanup, then run:
+
+```sh
+python3 scripts/test-invoke.py
+# Reuse an already completed workspace/all-features/all-targets debug build:
+python3 scripts/test-invoke.py --skip-build
+```
+
+This harness starts only its own processes, uses fresh application and invoke
+fleet names, and removes their shared-memory segments after both processes
+exit. Results are written under ignored `.local/`. It checks bidirectional
+binary calls, typed errors, accepted-call and response bounds, HTTP progress
+under invoke saturation, caller cancellation without remote rollback,
+generation retirement in both directions, ignored late responses, stable
+endpoints and graceful nested-call drain. It is a correctness test, not a load
+test. The native acceptance run has been verified on Linux x86-64 with Node;
+Deno and Bun native invoke behavior still needs runtime-specific validation.

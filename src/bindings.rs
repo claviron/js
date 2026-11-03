@@ -25,6 +25,8 @@ macro_rules! export_bindings {
                 Error::new(status, error.message)
             }
 
+            orbit::export_invoke_bindings!();
+
             #[napi(object)]
             pub struct JoinOptions {
                 pub fleet: String,
@@ -69,6 +71,38 @@ macro_rules! export_bindings {
 
             #[napi]
             impl Link {
+                #[napi]
+                pub async fn invocations(
+                    &self,
+                    options: InvokeOptions,
+                ) -> Result<Invocations> {
+                    self.inner
+                        .invocations(orbit::invoke::Options {
+                            fleet: options.fleet.into_boxed_str(),
+                            service: options.service.into_boxed_str(),
+                            limits: orbit::invoke::Limits {
+                                pending_calls: options.pending_calls as usize,
+                                accepted_calls: options.accepted_calls as usize,
+                                operation_bytes: options.operation_bytes
+                                    as usize,
+                                request_bytes: options.request_bytes as usize,
+                                response_bytes: options.response_bytes as usize,
+                            },
+                            routes: options
+                                .routes
+                                .into_iter()
+                                .map(|route| {
+                                    (
+                                        route.target.into_boxed_str(),
+                                        route.service.into_boxed_str(),
+                                    )
+                                })
+                                .collect(),
+                        })
+                        .await
+                        .map(|inner| Invocations { inner })
+                        .map_err(failure)
+                }
                 #[napi(getter)]
                 pub fn lane(&self) -> u32 {
                     self.inner.lane()

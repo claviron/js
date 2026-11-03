@@ -146,3 +146,76 @@ const next = await cell.wait(since);
 The same sequence works with scalar and text cells without converting the token.
 Text revision support requires a rebuilt addon compatible with the updated
 text-cell protocol; older binaries use a different shared-memory table.
+
+## Application-owned invokes (unreleased)
+
+This API requires a rebuilt native addon and matching JavaScript adapter from
+the updated source. Existing published prebuilds do not include it yet.
+
+HTTP and invoke use different handlers and Link connections in one JavaScript
+process. Keep the invoke fleet separate from the HTTP/event fleet; application
+events continue to use the application connection.
+
+```js
+import { join, InvokeReply } from "@claviron/orbit";
+
+const link = await join({ fleet: "apps", name: "hello" });
+const invokes = await link.invocations({
+  fleet: "calls", service: "hello-rpc",
+  pendingCalls: 16, acceptedCalls: 16,
+  operationBytes: 64, requestBytes: 65536, responseBytes: 65536,
+  routes: { calculator: "calculator-rpc" },
+});
+const invokeServing = invokes.serve(async ({ operation, payload, signal }) => {
+  if (operation !== "echo") return InvokeReply.unsupported();
+  signal.throwIfAborted();
+  return InvokeReply.success(payload);
+});
+const httpServing = link.serve(async () => {
+  const result = await invokes.call("calculator", "calculate", new Uint8Array([1, 2])).completion;
+  return new Response(result.payload, { status: result.code === "SUCCESS" ? 200 : 502 });
+});
+
+// On application shutdown, after allowing handlers to finish their owned work:
+// await link.close();
+// await Promise.all([httpServing, invokeServing]);
+```
+
+Configure a peer with service `calculator-rpc` on the `calls` fleet. Route names
+are local logical targets; each resolves to exactly one live service endpoint.
+A missing logical route yields `UNKNOWN_TARGET`, no matching endpoint yields
+`UNAVAILABLE`, and multiple endpoints yield `AMBIGUOUS_TARGET`. There is no
+implicit retry, failover or load balancing. The explicit limits bound pending
+outgoing calls, accepted incoming calls, UTF-8 operation names and binary
+request/response payload bytes. A pending budget applies to a connection, not to each route separately.
+
+Handlers receive `{ operation, payload, generation, signal }`, distinct from an
+HTTP `Request`. Payloads are `Uint8Array`; `generation` is an opaque `BigInt`.
+Return `InvokeReply.success(bytes)`, `busy()`, `closing()`, `unsupported()`,
+`tooLarge()` or `rejected(bytes)`. Handler exceptions and invalid replies become
+an empty `REJECTED` response. Native result limits also reject oversized replies.
+
+`invokes.call(target, operation, bytes, { signal })` returns an `InvokeCall` with
+`generation`, `completion` and `cancel()`. Native submission owns the bytes
+before it returns, so subsequent mutation of the input does not change the
+request. Completion resolves to `{ code, payload }`. Protocol outcomes include
+`SUCCESS`, `BUSY`, `CLOSED`, `OUTCOME_UNKNOWN`, `PAYLOAD_TOO_LARGE`, `PROTOCOL`,
+`TRANSPORT`, `INVALID_CONFIG`, `REMOTE_BUSY`, `REMOTE_CLOSING`, `UNSUPPORTED`,
+`RESPONSE_TOO_LARGE` and `REJECTED`, in addition to the route errors above.
+`OUTCOME_UNKNOWN` does not mean the remote operation did not run.
+
+A caller AbortSignal or `cancel()` rejects local completion with `AbortError`;
+it withdraws local interest and does not roll back an accepted remote operation.
+Application stop/restart retires incoming and outgoing work from its previous
+generation, aborts incoming handler signals and prevents late replies. Start
+opens a fresh generation without replacing the JavaScript process or invoke
+connection. Work that ignores cancellation remains the application's
+responsibility.
+
+`invokes.withdraw()` stops admission; `await invokes.close()` also joins its
+accepted work and outgoing completions. `await link.close()` closes all owned
+invoke connections while their accepted handlers can still finish. Keep the
+JavaScript event loop available during drain. No timeout or forced process
+termination is supplied. HTTP completion keeps its separate contract: also
+await `link.serve()` to join accepted HTTP responses. Edge shutdown notification
+remains an application decision rather than an automatic forced close.

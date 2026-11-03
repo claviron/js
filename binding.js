@@ -5,6 +5,8 @@
 // it into a standard Request and the handler's Response back into a reply.
 // Deno, Node and Bun load the same module; Deno needs --allow-ffi.
 
+import { Invocations, invokeOptions } from "./invoke.js";
+export { Invocations, InvokeCall, InvokeReply } from "./invoke.js";
 import { discoverFrameworks } from "./framework.js";
 import { answerSession } from "./session.js";
 export { Session } from "./session.js";
@@ -46,10 +48,26 @@ export class Link {
   #sessionClosing = new AbortController();
   #sessions = new Set();
   #http = new Set();
+  #invokes = new Set();
   #closing;
 
   constructor(link) {
     this.#native = link;
+  }
+
+  /** Open a separate invoke Link in the same JS process and native runtime. */
+  async invocations(options) {
+    if (this.#closing) throw new Error("Application is closing.");
+    const normalized = invokeOptions(options);
+    this.#control();
+    const native = await this.#native.invocations(normalized);
+    const child = new Invocations(native);
+    this.#invokes.add(child);
+    if (this.#closing) {
+      await child.close();
+      throw new Error("Application closed while opening invoke Link.");
+    }
+    return child;
   }
 
   /** The lane this process holds; its address, and its node in the fleet. */
@@ -226,8 +244,8 @@ export class Link {
    */
   close() {
     this.#closing ??= (async () => {
-      await this.#native.close();
-      await this.#endSessions();
+      const closing = this.#native.close();
+      await Promise.all([closing, this.#endSessions(), ...[...this.#invokes].map((child) => child.close())]);
     })();
     return this.#closing;
   }
