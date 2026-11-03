@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import { finished } from "node:stream/promises";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import { deflateSync } from "node:zlib";
 import { nativeTargets } from "../native.js";
 import { readPrepared, releaseContext, sourceDigest, stagePrepared } from "./release.js";
 
@@ -54,6 +55,7 @@ export async function buildAll(hosts, { root = repository, dryRun = false } = {}
   const context = await releaseContext(root);
   for (const host of hosts) console.log(`${host.name}: ${host.ssh} -> ${host.target}, revision ${revision.slice(0, 8)}`);
   if (dryRun) return [];
+  const dependencyLock = deflateSync(await readFile(join(root, "Cargo.lock"))).toString("base64");
   try { await execute("git", ["cat-file", "-e", `${revision}:scripts/build-worker.js`], { cwd: root }); }
   catch { throw new Error("Commit the builder scripts before starting remote builds"); }
   await mkdir(join(root, "target", "build-all"), { recursive: true });
@@ -65,7 +67,7 @@ export async function buildAll(hosts, { root = repository, dryRun = false } = {}
     let started;
     try {
       const request = { repository: host.repository, target: host.target, jobs: host.jobs,
-        nice: host.nice, cache: host.cache, revision, context };
+        nice: host.nice, cache: host.cache, revision, context, dependencyLock };
       const encoded = Buffer.from(JSON.stringify(request)).toString("base64");
       const git = `git -C ${quote(host.repository)}`;
       const bootstrap = `set -eu; set -o pipefail; ${git} cat-file -e ${quote(revision + "^{commit}")} 2>/dev/null || ${git} fetch --no-tags origin ${revision}; ` +

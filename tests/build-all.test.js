@@ -26,9 +26,13 @@ test("concurrent builders finish independently and collect only matching artifac
   await mkdir(commands);
   await writeFile(events, "");
   execFileSync("git", ["clone", "--quiet", "--no-hardlinks", repository, root]);
-  for (const file of ["scripts/build-worker.js", "scripts/release.js", "invoke.js"]) {
+  for (const file of [".gitignore", "scripts/build-worker.js", "scripts/release.js", "invoke.js"]) {
     await copyFile(join(repository, file), join(root, file));
   }
+  // A clean builder clone has no lockfile; only the release checkout owns it.
+  execFileSync("git", ["rm", "--cached", "--ignore-unmatch", "Cargo.lock"], { cwd: root });
+  const dependencyLock = "fixture dependency snapshot\n";
+  await writeFile(join(root, "Cargo.lock"), dependencyLock);
   await writeFile(join(root, "scripts/publish.sh"), "#!/usr/bin/env bash\nexec node scripts/fixture-prepare.mjs\n");
   await writeFile(join(root, "scripts/fixture-prepare.mjs"), `
 import { createHash } from 'node:crypto';
@@ -40,7 +44,7 @@ await stagePrepared(process.cwd(),'linux-x64-gnu',bytes,{format:1,package:contex
 target:'x86_64-unknown-linux-gnu',profile:'release',cpu:'x86-64',napi:8,source:context.source,
 sha256:createHash('sha256').update(bytes).digest('hex')});
 `);
-  execFileSync("git", ["add", "scripts/publish.sh", "scripts/fixture-prepare.mjs", "scripts/build-worker.js", "scripts/release.js", "invoke.js"], { cwd: root });
+  execFileSync("git", ["add", ".gitignore", "scripts/publish.sh", "scripts/fixture-prepare.mjs", "scripts/build-worker.js", "scripts/release.js", "invoke.js"], { cwd: root });
   execFileSync("git", ["-c", "commit.gpgsign=false", "-c", "user.name=Example", "-c", "user.email=build@example.test",
     "commit", "--quiet", "-m", "Prepare isolated build fixture"], { cwd: root });
   const ssh = join(commands, "ssh");
@@ -91,6 +95,8 @@ for(const name of ['orbit.node','release.json'])copyFileSync(join(source,name),j
   assert.deepEqual(results.map((result) => result.success), [false, true]);
   const { receipt } = await readPrepared("linux-x64-gnu", join(root, "prebuilds/linux-x64-gnu"), await releaseContext(root));
   assert.equal(receipt.target, "x86_64-unknown-linux-gnu");
+  assert.equal(await readFile(join(root, "Cargo.lock"), "utf8"), dependencyLock);
+  assert.equal(execFileSync("git", ["ls-files", "Cargo.lock"], { cwd: root, encoding: "utf8" }), "");
   assert.deepEqual((await readFile(events, "utf8")).trim().split("\n").map((line) => JSON.parse(line).host).sort(), ["accepted", "refused"]);
   assert.deepEqual(execFileSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" }).trim(), "");
 });

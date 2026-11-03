@@ -34,7 +34,14 @@ export function validateBinary(target, bytes) {
 export async function sourceDigest(root = repository) {
   const hash = createHash("sha256");
   async function include(relative) {
-    const bytes = await readFile(join(root, relative));
+    let bytes;
+    try { bytes = await readFile(join(root, relative)); }
+    catch (error) {
+      if (relative === "Cargo.lock" && error.code === "ENOENT") {
+        throw new Error("Cargo.lock is local and missing; run cargo generate-lockfile before release commands.");
+      }
+      throw error;
+    }
     hash.update(relative).update("\0").update(String(bytes.length)).update("\0").update(bytes);
   }
   async function directory(relative) {

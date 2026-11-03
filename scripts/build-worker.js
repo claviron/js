@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, writeFile, rm } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { inflateSync } from "node:zlib";
 
 async function command(program, args, options = {}) {
   const child = spawn(program, args, { stdio: "inherit", ...options });
@@ -54,6 +55,8 @@ async function launch(request) {
   const source = join(job, "source");
   await command("git", ["clone", "--quiet", "--no-hardlinks", "--no-checkout", request.repository, source]);
   await command("git", ["-C", source, "checkout", "--quiet", "--detach", request.revision]);
+  // The dependency snapshot is local to the release, not stored in Git.
+  await writeFile(join(source, "Cargo.lock"), inflateSync(Buffer.from(request.dependencyLock, "base64")));
   const worker = join(source, "scripts/build-worker.js");
   await writeFile(join(job, "request.json"), JSON.stringify({ ...request, cache }), { mode: 0o600 });
   const log = openSync(join(job, "build.log"), "a", 0o600);

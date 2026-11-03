@@ -91,6 +91,16 @@ test("rejects a replaced binary, nonportable receipt and stale sources", async (
   assert.ok((await inspectPackage(root)).every((entry) => !entry.ready));
 });
 
+test("an ignored dependency lock still binds artifacts to the release snapshot", async (t) => {
+  const root = await fixture(t);
+  await prepared(root, "linux-x64-gnu");
+  assert.ok((await inspectPackage(root)).find((entry) => entry.target === "linux-x64-gnu").ready);
+  await writeFile(join(root, "Cargo.lock"), "different dependency snapshot\n");
+  assert.ok(!(await inspectPackage(root)).find((entry) => entry.target === "linux-x64-gnu").ready);
+  await rm(join(root, "Cargo.lock"));
+  await assert.rejects(sourceDigest(root), /cargo generate-lockfile before release commands/);
+});
+
 test("prepare overrides native flags; publication requires every prepared target and an explicit action", async (t) => {
   const root = await fixture(t);
   const commands = join(root, "commands");

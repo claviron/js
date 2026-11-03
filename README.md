@@ -135,6 +135,8 @@ After finishing your source and package metadata, prepare each target on a
 suitable build host:
 
 ```sh
+# Generate once for the release; reuse this file on the other builders.
+cargo generate-lockfile
 bash scripts/publish.sh --prepare
 # A cross build requires an installed target, linker and target sysroot:
 bash scripts/publish.sh --prepare --target x86_64-unknown-freebsd
@@ -146,6 +148,12 @@ matching pair into the release checkout. Keep all build hosts on identical
 package metadata and release inputs. Changing those inputs invalidates existing
 receipts; prepare them again. Local development binaries under `native/` are
 kept separate from release artifacts.
+
+`Cargo.lock` is generated locally and ignored by Git. Retain the same lockfile
+for all targets in one release: it remains part of the verified release inputs.
+Generate it before running release preparation, checks or synchronization in a
+fresh checkout. For manual builds on several hosts, copy that lockfile to each
+build checkout. Dependency changes require preparing new matching artifacts.
 
 ### Build on several hosts
 
@@ -166,7 +174,9 @@ Selected hosts build concurrently from isolated clones of the current commit.
 The worker script comes from that commit in the remote repository; missing
 commits are fetched from its `origin` without switching the development checkout.
 Their development checkouts are preserved. The committed release inputs must
-match the local inputs; the remote worker checks this before compiling. Builds
+match the local inputs; the remote worker checks this before compiling. The
+local `Cargo.lock` is transferred into each isolated build checkout so every
+builder uses the same dependency snapshot with `--locked`. Builds
 continue in the background if an SSH connection closes, with their job/log paths
 reported locally. A failed host does not stop the other selected builds.
 
