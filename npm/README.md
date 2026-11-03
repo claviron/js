@@ -219,3 +219,9 @@ JavaScript event loop available during drain. No timeout or forced process
 termination is supplied. HTTP completion keeps its separate contract: also
 await `link.serve()` to join accepted HTTP responses. Edge shutdown notification
 remains an application decision rather than an automatic forced close.
+
+Native invoke correctness has been verified on Linux x86-64 with Node 26.12.1 and
+Deno 2.9.8 using the same HTTP/invoke application fixture. This includes local
+caller cancellation, generation retirement and graceful nested-call drain in a
+single JavaScript process. Bun native invoke behavior has not been validated. These
+checks do not replace sustained-load or platform-specific validation.

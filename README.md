@@ -246,6 +246,10 @@ harness, install the `orbit` CLI for test-segment cleanup, then run:
 python3 scripts/test-invoke.py
 # Reuse an already completed workspace/all-features/all-targets debug build:
 python3 scripts/test-invoke.py --skip-build
+# Run the same fixture with Deno instead of the default Node runtime:
+python3 scripts/test-invoke.py --skip-build --runtime deno
+# Invoke wrapper regressions can run directly under Deno too:
+deno test tests/invoke.test.js
 ```
 
 This harness starts only its own processes, uses fresh application and invoke
@@ -255,5 +259,8 @@ binary calls, typed errors, accepted-call and response bounds, HTTP progress
 under invoke saturation, caller cancellation without remote rollback,
 generation retirement in both directions, ignored late responses, stable
 endpoints and graceful nested-call drain. It is a correctness test, not a load
-test. The native acceptance run has been verified on Linux x86-64 with Node;
-Deno and Bun native invoke behavior still needs runtime-specific validation.
+test. Both runtime choices run the same HTTP/invoke fixture and Rust peer;
+the result records the runtime version and application PID. Native acceptance
+has been verified on Linux x86-64 with Node 26.12.1 and Deno 2.9.8.
+Deno also passes all seven invoke wrapper regressions. Bun native invoke
+behavior has not been validated.

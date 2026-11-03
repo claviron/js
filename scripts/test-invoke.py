@@ -15,7 +15,9 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--skip-build",action="store_true",help="reuse a completed workspace all-features/all-targets build")
+    parser.add_argument("--runtime",choices=("node","deno"),default="node",help="JavaScript runtime for the same HTTP/invoke fixture")
     args=parser.parse_args()
+    runtime_version=subprocess.check_output([args.runtime,"--version"],text=True).strip()
     if not args.skip_build:
         subprocess.run(["cargo","build","--workspace","--all-features","--all-targets"],cwd=ROOT,check=True)
     target=Path(os.environ.get("CARGO_TARGET_DIR",ROOT/"target"))
@@ -45,7 +47,10 @@ def main():
         peer=start("peer",[str(target/"debug/examples/invoke"),fleet,invoke_fleet])
         ready=line(peer).split()
         if ready[0]!="PEER_READY":raise RuntimeError("Missing peer geometry")
-        app=start("js",["node","tests/invoke-native.js",str(addon),fleet,invoke_fleet,ready[1]])
+        runtime=[args.runtime]
+        if args.runtime=="deno":
+            runtime += ["run","--allow-ffi","--allow-read","--allow-env","--allow-sys"]
+        app=start("js",runtime+["tests/invoke-native.js",str(addon),fleet,invoke_fleet,ready[1]])
         expect(app,f"INVOKE_READY {app.pid}")
         send(peer,"run");expect(peer,"BASIC_CHECKS_PASSED")
         send(app,"outgoing-basic");expect(app,"OUTGOING_BASIC_PASSED")
@@ -79,7 +84,8 @@ def main():
         for name in (fleet,invoke_fleet):
             with (record/(name+".cleanup")).open("w") as cleanup:
                 subprocess.run(["orbit","clear",name,"--all","--yes"],stdout=cleanup,check=True)
-    (record/"result.json").write_text(json.dumps({"passed":True,"application_fleet":fleet,"invoke_fleet":invoke_fleet,
+    (record/"result.json").write_text(json.dumps({"passed":True,"runtime":args.runtime,"runtime_version":runtime_version,
+        "application_pid":app.pid,"application_fleet":fleet,"invoke_fleet":invoke_fleet,
         "checks":["bidirectional JavaScript/Rust calls", "binary payload/operation preservation", "typed protocol errors and rejections",
                   "accepted call and response bounds", "caller cancellation is not remote rollback", "generation cancellation in both directions",
                   "ignored late reply", "HTTP progresses while invoke is saturated", "stable invoke endpoint across generations",
