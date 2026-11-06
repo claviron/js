@@ -133,7 +133,7 @@ async function prepare(tripleOverride) {
     env: { ...process.env, CARGO_ENCODED_RUSTFLAGS: `-C\x1ftarget-cpu=${cpu}` },
   });
   if (context.source !== await sourceDigest()) throw new Error("sources changed during preparation; run --prepare again");
-  const library = target === "darwin-arm64" ? "liborbit_js_addon.dylib" : "liborbit_js_addon.so";
+  const library = target === "darwin-arm64" ? "libclaviron_js_addon.dylib" : "libclaviron_js_addon.so";
   const artifact = join(process.env.CARGO_TARGET_DIR || "target", triple, "release", library);
   const bytes = await readFile(resolve(repository, artifact));
   validateBinary(target, bytes);

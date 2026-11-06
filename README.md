@@ -1,4 +1,4 @@
-# orbit-js
+# claviron/js
 
 A JavaScript library for handling Claviron application requests over same-host
 Orbit Link. Your normal Node, Deno or Bun application imports the library and
@@ -46,7 +46,7 @@ application process and are available beside Orbit's connection API.
 The [application-owned addon example](examples/rust-addon) demonstrates this:
 
 ```rust
-orbit_js::export_bindings!();
+claviron_js::export_bindings!();
 
 #[napi_derive::napi]
 pub fn greeting(name: String) -> String {
@@ -54,7 +54,7 @@ pub fn greeting(name: String) -> String {
 }
 ```
 
-The addon is a Rust `cdylib` using `orbit-js` with its `napi` feature, `napi` with
+The addon is a Rust `cdylib` using `claviron-js` with its `napi` feature, `napi` with
 `napi8`, and `napi-derive`. Its build script calls `napi_build::setup()` through
 the `napi-build` build dependency. See the example's [Cargo manifest](examples/rust-addon/Cargo.toml)
 and [build script](examples/rust-addon/build.rs) for the complete setup.

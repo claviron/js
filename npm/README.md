@@ -90,7 +90,7 @@ sustained multi-process load; validate that runtime with your workload.
 
 ## Source and native builds
 
-See [orbit-js on GitHub](https://github.com/claviron/orbit-js) to build native
+See [claviron-js on GitHub](https://github.com/claviron/js) to build native
 bindings or add your own Rust functions. The npm package includes the prebuilt
 bindings listed above.
 

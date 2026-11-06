@@ -76,7 +76,7 @@ impl Events {
         let forwarding = tokio::spawn(async move {
             if let Err(error) = driving.drive().await {
                 eprintln!(
-                    "orbit-js: events stopped crossing the Link: {error}"
+                    "orbit: events stopped crossing the Link: {error}"
                 );
             }
         });
@@ -95,14 +95,14 @@ impl Events {
                 Ok(ready) => ready,
                 Err(error) => {
                     eprintln!(
-                        "orbit-js: the event ring cannot wake this process: {error}"
+                        "orbit: the event ring cannot wake this process: {error}"
                     );
                     return;
                 }
             },
             Err(error) => {
                 eprintln!(
-                    "orbit-js: the event ring cannot wake this process: {error}"
+                    "orbit: the event ring cannot wake this process: {error}"
                 );
                 return;
             }
@@ -139,7 +139,7 @@ impl Events {
             }
             Ok(_) => {}
             Err(error) => {
-                eprintln!("orbit-js: an event frame was refused: {error}")
+                eprintln!("orbit: an event frame was refused: {error}")
             }
         }
     }
@@ -255,7 +255,7 @@ impl Events {
     pub(crate) fn flush(&self) {
         if let Err(error) = self.bridge.pump() {
             eprintln!(
-                "orbit-js: pending events could not cross the Link: {error}"
+                "orbit: pending events could not cross the Link: {error}"
             );
         }
     }

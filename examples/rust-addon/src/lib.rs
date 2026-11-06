@@ -1,6 +1,6 @@
 //! An application adds its own Rust operation beside Orbit's bindings.
 
-orbit_js::export_bindings!();
+claviron_js::export_bindings!();
 
 #[napi_derive::napi]
 pub fn greeting(name: String) -> String {

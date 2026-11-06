@@ -21,5 +21,5 @@ ENV PATH="/opt/rust/bin:/usr/local/bin:/usr/bin:/bin" \
     CARGO_TARGET_X86_64_UNKNOWN_FREEBSD_LINKER="/usr/local/bin/freebsd-cc" \
     CC_x86_64_unknown_freebsd="/usr/local/bin/freebsd-cc" \
     CXX_x86_64_unknown_freebsd="/usr/local/bin/freebsd-cc"
-WORKDIR /workspace/orbit-js
+WORKDIR /workspace/claviron-js
 CMD ["bash", "scripts/publish.sh", "--prepare", "--target", "x86_64-unknown-freebsd"]

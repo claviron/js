@@ -24,7 +24,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         matches!(command.as_str(), "start" | "stop" | "restart").then(|| {
             ControlTarget { runtime: "js".to_owned(), name: name.clone() }
         });
-    let client = ApplicationClient::join(&fleet, "orbit-js-control", 1)?;
+    let client = ApplicationClient::join(&fleet, "claviron-js-control", 1)?;
     let sent = client.command(&ControlCommand {
         application: name.clone(),
         name: command.clone(),

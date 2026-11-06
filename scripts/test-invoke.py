@@ -22,7 +22,7 @@ def main():
         subprocess.run(["cargo","build","--workspace","--all-features","--all-targets"],cwd=ROOT,check=True)
     target=Path(os.environ.get("CARGO_TARGET_DIR",ROOT/"target"))
     if not target.is_absolute(): target=ROOT/target
-    library="liborbit_js_addon.dylib" if sys.platform=="darwin" else "liborbit_js_addon.so"
+    library="libclaviron_js_addon.dylib" if sys.platform=="darwin" else "libclaviron_js_addon.so"
     fleet="i"+secrets.token_hex(3); invoke_fleet=fleet+"v"
     for name in (fleet,invoke_fleet):
         if any(Path("/dev/shm").glob("orbit-"+name+"-*")): raise RuntimeError("Acceptance namespace already exists")

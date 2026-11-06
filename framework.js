@@ -24,7 +24,7 @@ export async function discoverFrameworks() {
       text = await readFile(path, "utf8");
     } catch (error) {
       if (error.code !== "ENOENT") {
-        console.warn(`orbit-js: framework metadata could not be read from ${path}`, error);
+        console.warn(`orbit: framework metadata could not be read from ${path}`, error);
         return [];
       }
     }
@@ -34,7 +34,7 @@ export async function discoverFrameworks() {
       try {
         packageInfo = JSON.parse(text);
       } catch (error) {
-        console.warn(`orbit-js: framework metadata could not be parsed from ${path}`, error);
+        console.warn(`orbit: framework metadata could not be parsed from ${path}`, error);
         return [];
       }
       // Stop at this package, even when it declares no known framework.

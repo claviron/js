@@ -195,7 +195,7 @@ export async function answerSession(exchange, handler, signals) {
     await Promise.race([handled, stopped.promise]);
   } catch (error) {
     if (!session.signal.aborted) {
-      console.error("orbit-js: session handler failed", error);
+      console.error("orbit: session handler failed", error);
       if (session.accepted) await session.abort(error);
       else await session.reject(500);
     }

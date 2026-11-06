@@ -49,7 +49,7 @@ async function build(job) {
 }
 
 async function launch(request) {
-  const cache = request.cache ?? join(homedir(), ".cache", "orbit-js-builder");
+  const cache = request.cache ?? join(homedir(), ".cache", "claviron-js-builder");
   await mkdir(join(cache, "jobs"), { recursive: true, mode: 0o700 });
   const job = await mkdtemp(join(cache, "jobs", `${request.revision.slice(0, 8)}-${request.target}-`));
   const source = join(job, "source");

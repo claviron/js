@@ -100,14 +100,14 @@ export class Link {
           this.#sessions.add(task);
           task.then(() => this.#sessions.delete(task), (error) => {
             this.#sessions.delete(task);
-            console.error("orbit-js: session cleanup failed", error);
+            console.error("orbit: session cleanup failed", error);
           });
         } else {
           const task = answer(exchange, handler, this.#generation.signal);
           this.#http.add(task);
           task.then(() => this.#http.delete(task), (error) => {
             this.#http.delete(task);
-            console.error("orbit-js: HTTP cleanup failed", error);
+            console.error("orbit: HTTP cleanup failed", error);
           });
         }
       }
@@ -306,7 +306,7 @@ export class Link {
         try {
           listener(event.payload, { id: event.id, topic: event.topic });
         } catch (error) {
-          console.error(`orbit-js: listener for '${event.topic}' failed`, error);
+          console.error(`orbit: listener for '${event.topic}' failed`, error);
         }
       }
     }
@@ -343,7 +343,7 @@ function notify(listeners, value, what) {
     try {
       listener(value);
     } catch (error) {
-      console.error(`orbit-js: listener for ${what} failed`, error);
+      console.error(`orbit: listener for ${what} failed`, error);
     }
   }
 }
@@ -380,7 +380,7 @@ async function answer(exchange, handler, generation) {
       response = await Promise.race([handled, stopped]);
     } catch (error) {
       if (!signal.aborted) {
-        console.error("orbit-js: handler failed", error);
+        console.error("orbit: handler failed", error);
         response = new Response("Internal Server Error", { status: 500 });
       }
     }
@@ -389,7 +389,7 @@ async function answer(exchange, handler, generation) {
     await reply(exchange, response, controller, stopped, abort);
   } catch (error) {
     controller.abort(error);
-    console.error("orbit-js: response failed", error);
+    console.error("orbit: response failed", error);
   } finally {
     generation.removeEventListener("abort", follow);
     if (signal.aborted) await abort();

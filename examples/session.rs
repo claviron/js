@@ -1,4 +1,4 @@
-//! Exercise the Link side of message sessions against an orbit-js application.
+//! Exercise the Link side of message sessions against an claviron-js application.
 //! This sends the same records as an edge; it does not open a WebSocket/QUIC listener.
 //!
 //! `cargo run --example session -- <fleet> <application> <h1|h2|h3>`

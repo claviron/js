@@ -115,7 +115,7 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     // one live process, so the index is unique while it lives — what the
     // Link's "forwarded once, at its origin" rule and per-node rings need. A
     // fleet shared with a supervised Claviron runner would number its nodes
-    // differently; an orbit-js application keeps a fleet of its own.
+    // differently; an claviron-js application keeps a fleet of its own.
     let node = u16::try_from(joined.lane)
         .map_err(|_| failure("the lane does not fit a fleet node"))?;
     let capacity = u16::try_from(LINK_FLEET_CAPACITY)
@@ -271,7 +271,7 @@ impl Link {
         let children = self.invokes.lock().await.clone();
         for child in children {
             if let Err(error) = child.close().await {
-                eprintln!("orbit-js: invoke drain failed: {error}");
+                eprintln!("orbit: invoke drain failed: {error}");
             }
         }
         self.events.flush();
@@ -381,7 +381,7 @@ impl Link {
                         self.events.publish_lifecycle(&command.name)
                 {
                     eprintln!(
-                        "orbit-js: lifecycle command could not spread: {error}"
+                        "orbit: lifecycle command could not spread: {error}"
                     );
                 }
             }

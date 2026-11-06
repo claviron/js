@@ -14,9 +14,9 @@ if [[ ! -d "$toolchain/lib/rustlib/x86_64-unknown-freebsd/lib" ]]; then
 fi
 project="$(pwd -P)"
 workspace="$(dirname "$project")"
-cache="${ORBIT_FREEBSD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/orbit-js-freebsd}"
+cache="${ORBIT_FREEBSD_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/claviron-js-freebsd}"
 mkdir -p "$cache/cargo" "$cache/target"
-image="orbit-js-freebsd-builder:14.4"
+image="claviron-js-freebsd-builder:14.4"
 registry="${CARGO_HOME:-$HOME/.cargo}/registry"
 # Fetch through the operator's Cargo configuration; credentials never enter Docker.
 cargo fetch --locked --target x86_64-unknown-freebsd
@@ -26,10 +26,10 @@ docker build --network "${ORBIT_FREEBSD_BUILD_NETWORK:-default}" --tag "$image" 
 mkdir -p prebuilds
 docker run --rm --network none --user "$(id -u):$(id -g)" --cap-drop ALL \
   --security-opt no-new-privileges --cpus "${CARGO_BUILD_JOBS:-4}" --memory 8g \
-  --mount "type=bind,src=$project,dst=/workspace/orbit-js,readonly" \
+  --mount "type=bind,src=$project,dst=/workspace/claviron-js,readonly" \
   --mount "type=bind,src=$workspace/claviron,dst=/workspace/claviron,readonly" \
   --mount "type=bind,src=$workspace/orbitive,dst=/workspace/orbitive,readonly" \
-  --mount "type=bind,src=$project/prebuilds,dst=/workspace/orbit-js/prebuilds" \
+  --mount "type=bind,src=$project/prebuilds,dst=/workspace/claviron-js/prebuilds" \
   --mount "type=bind,src=$toolchain,dst=/opt/rust,readonly" \
   --mount "type=bind,src=$cache,dst=/cache" \
   --mount "type=bind,src=$registry,dst=/cache/cargo/registry,readonly" \

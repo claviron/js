@@ -115,7 +115,7 @@ const target = process.argv[process.argv.indexOf('--target') + 1];
 const directory = join(process.env.CARGO_TARGET_DIR, target, 'release');
 mkdirSync(directory, { recursive: true });
 const binaries = ${JSON.stringify(Object.fromEntries(Object.entries(nativeTargets).map(([key, triple]) => [triple, [...binary(key)]])))};
-writeFileSync(join(directory, target.includes('apple') ? 'liborbit_js_addon.dylib' : 'liborbit_js_addon.so'), Buffer.from(binaries[target]));
+writeFileSync(join(directory, target.includes('apple') ? 'libclaviron_js_addon.dylib' : 'libclaviron_js_addon.so'), Buffer.from(binaries[target]));
 `);
   const npm = join(commands, "npm");
   await writeFile(npm, `#!${process.execPath}\n` + `

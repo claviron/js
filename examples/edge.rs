@@ -45,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let client = ApplicationClient::join(&fleet, "orbit-js-edge", 1)?;
+    let client = ApplicationClient::join(&fleet, "claviron-js-edge", 1)?;
     if !client.serves(&name) {
         client.leave();
         return Err(

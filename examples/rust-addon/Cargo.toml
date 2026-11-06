@@ -1,5 +1,5 @@
 [package]
-name = "orbit-js-example-addon"
+name = "claviron-js-example-addon"
 version = "0.1.0"
 edition = "2024"
 publish = false
@@ -10,7 +10,7 @@ test = false
 doctest = false
 
 [dependencies]
-orbit-js = { path = "../..", features = ["napi"] }
+claviron-js = { path = "../..", features = ["napi"] }
 napi = { version = "3.15", default-features = false, features = ["napi8"] }
 napi-derive = "3.6.13"
 

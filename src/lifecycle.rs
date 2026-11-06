@@ -32,7 +32,7 @@ use crate::RUNTIME;
 
 /// The internal topic instances of one application share lifecycle decisions
 /// on, addressed to that application only.
-pub(crate) const LIFECYCLE_TOPIC: &str = "orbit-js.lifecycle.v1";
+pub(crate) const LIFECYCLE_TOPIC: &str = "claviron-js.lifecycle.v1";
 
 /// Something the edge said, for JavaScript.
 pub struct ControlEvent {
@@ -73,7 +73,7 @@ impl Lifecycle {
                     frameworks,
                     icon,
                     ..ApplicationDescription::new("javascript", "fetch")
-                        .runner("orbit-js")
+                        .runner("claviron-js")
                 },
                 segment,
                 name: name.to_owned(),
@@ -115,7 +115,7 @@ impl Lifecycle {
             }
             if state.apply(action).is_err() {
                 eprintln!(
-                    "orbit-js: application generation identity exhausted"
+                    "orbit: application generation identity exhausted"
                 );
                 return;
             }
@@ -203,13 +203,13 @@ impl Lifecycle {
                     self.segment.publish_application_state(&self.name, &rows)
                 {
                     eprintln!(
-                        "orbit-js: application state was not reported: {error}"
+                        "orbit: application state was not reported: {error}"
                     );
                 }
             }
             Err(error) => {
                 eprintln!(
-                    "orbit-js: application state could not be encoded: {error}"
+                    "orbit: application state could not be encoded: {error}"
                 )
             }
         }
