@@ -147,10 +147,7 @@ The same sequence works with scalar and text cells without converting the token.
 Text revision support requires a rebuilt addon compatible with the updated
 text-cell protocol; older binaries use a different shared-memory table.
 
-## Application-owned invokes (unreleased)
-
-This API requires a rebuilt native addon and matching JavaScript adapter from
-the updated source. Existing published prebuilds do not include it yet.
+## Application-owned invokes
 
 HTTP and invoke use different handlers and Link connections in one JavaScript
 process. Keep the invoke fleet separate from the HTTP/event fleet; application

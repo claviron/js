@@ -1,25 +1,40 @@
 # orbit-js
 
-**Build a JavaScript native module with Orbit connectivity and your own Rust code.**
+A JavaScript library for handling Claviron application requests over same-host
+Orbit Link. Your normal Node, Deno or Bun application imports the library and
+supplies a standard Fetch handler. Claviron owns public connections and host
+routing; your application owns its handlers and process lifetime.
 
-This is the source repository for [`@claviron/orbit`](https://www.npmjs.com/package/@claviron/orbit).
-It provides a reusable Rust library, a Node-API addon, and JavaScript adapters for
-connecting Node, Deno or Bun applications to a Claviron edge over same-host Orbit
-Link. Claviron owns public HTTP connections and routing; the application handles
-requests through standard `Request` and `Response` objects.
+## Install
 
-For installation and application examples, read the [npm package README](npm/README.md).
+```sh
+npm install @claviron/orbit
+# or: bun add @claviron/orbit
+# or: deno add npm:@claviron/orbit
+```
 
-## Benchmarks
+Native bindings are included for macOS arm64, Linux with glibc on x64 and arm64,
+and FreeBSD on x64 and arm64. The package selects the right one automatically.
 
-[Edge and Orbit application benchmarks](https://github.com/claviron/claviron/blob/main/examples/BENCHMARKS.md)
-include Node.js, Deno and Bun handlers served through Claviron Edge and Orbit
-Link, alongside native Rust controls and Python/PHP application paths.
+## Use from a JavaScript application
 
-The report records hardware, runtime versions, worker and lane counts,
-throughput, p99 latency and errors for plain-text and JSON requests. macOS
-ARM64 and Linux x86-64 campaigns are documented separately with their
-configurations.
+```js
+import { serve } from "@claviron/orbit";
+
+await serve({ fleet: "apps", name: "hello" }, () => {
+  return new Response("Hello from JavaScript");
+});
+```
+
+```sh
+node app.mjs
+# or: bun app.mjs
+# or: deno run --allow-ffi --allow-read --allow-env app.mjs
+```
+
+`fleet` and `name` identify the application; a Claviron edge on the same host
+routes to them. See the [package guide](npm/README.md) for events, lifecycle,
+cells and invokes.
 
 ## Add your own native capabilities
 
@@ -70,154 +85,6 @@ implement application-specific work; changing the Orbit transport itself also re
 edge. Long-running native work should use an appropriate asynchronous Node-API
 interface so it does not block JavaScript execution.
 
-## Build from source
-
-You need a compatible stable Rust toolchain, Node.js with npm, and the native
-compiler/linker for your target. Node-API 8 is the addon ABI. There are no npm
-build dependencies to install for the current source tree.
-
-The Rust library uses Claviron `0.2.0-alpha.25` from crates.io with its `orbit`
-and `application` features. It resolves Orbitive `0.6.1` and Continuo `0.11.0`
-through Claviron; no sibling source checkouts are required.
-
-For an application-owned addon, enable the Rust library's `napi` feature.
-The addon example in this repository builds against the workspace library.
-
-For a local addon on macOS arm64 or Linux x64 with glibc:
-
-```sh
-npm run build
-# Or build a debug addon:
-npm run build -- debug
-```
-
-This stages a local binary under `native/<platform>/orbit.node`. It does not
-prepare portable release artifacts. The helper currently accepts those two build
-hosts; the release preparation tool supports the five targets listed below.
-
-To build and inspect the application-owned addon example:
-
-```sh
-cargo build --workspace --all-features
-# macOS:
-cp target/debug/liborbit_js_example_addon.dylib target/debug/example.node
-# Linux or FreeBSD: copy liborbit_js_example_addon.so instead.
-node examples/rust-addon/check.js
-```
-
-If you set `CARGO_TARGET_DIR`, use that output directory in the copy command and
-place the result at `target/debug/example.node`, where the example loads it.
-The check loads your Rust function and Orbit classes without joining a fleet.
-`node examples/rust-addon/app.js` serves the greeting once an edge is configured.
-
-Run the JavaScript tests with `npm test`. The Rust library can also be embedded
-without Node-API by leaving its optional `napi` feature disabled.
-
-## Customize and publish your own npm package
-
-Fork this source and choose your own npm package name and version in
-`package.json`. Update descriptions, ownership metadata and import examples for
-your package. Edit `npm/README.md` for its users. Keep this root README focused
-on source development. If you change the native addon, retain Orbit's exports
-and add your application exports to the addon you build.
-
-The default release includes these prebuilds:
-
-| Package target | Rust target |
-| --- | --- |
-| `darwin-arm64` | `aarch64-apple-darwin` |
-| `linux-x64-gnu` | `x86_64-unknown-linux-gnu` |
-| `linux-arm64-gnu` | `aarch64-unknown-linux-gnu` |
-| `freebsd-x64` | `x86_64-unknown-freebsd` |
-| `freebsd-arm64` | `aarch64-unknown-freebsd` |
-
-After finishing your source and package metadata, prepare each target on a
-suitable build host:
-
-```sh
-# Generate once for the release; reuse this file on the other builders.
-cargo generate-lockfile
-bash scripts/publish.sh --prepare
-# A cross build requires an installed target, linker and target sysroot:
-bash scripts/publish.sh --prepare --target x86_64-unknown-freebsd
-```
-
-Preparation builds a release addon with a portable CPU baseline and writes
-`prebuilds/<platform>/orbit.node` plus a `release.json` receipt. Collect each
-matching pair into the release checkout. Keep all build hosts on identical
-package metadata and release inputs. Changing those inputs invalidates existing
-receipts; prepare them again. Local development binaries under `native/` are
-kept separate from release artifacts.
-
-`Cargo.lock` is generated locally and ignored by Git. Retain the same lockfile
-for all targets in one release: it remains part of the verified release inputs.
-Generate it before running release preparation, checks or synchronization in a
-fresh checkout. For manual builds on several hosts, copy that lockfile to each
-build checkout. Dependency changes require preparing new matching artifacts.
-
-### Build on several hosts
-
-Copy `.hosts.example` to the ignored `.hosts` file and set your SSH aliases,
-repository paths and release targets. Optional `jobs`, `nice` and `cache` fields
-control each builder. SSH, rsync, Git, Node.js, Bash and the target's Rust toolchain
-must already be available.
-Commit and push the builder scripts and build inputs before starting a new revision.
-
-```sh
-bash scripts/build-all.sh --dry-run
-bash scripts/build-all.sh
-# Or select entries from .hosts:
-bash scripts/build-all.sh --host linux --host freebsd
-```
-
-Selected hosts build concurrently from isolated clones of the current commit.
-The worker script comes from that commit in the remote repository; missing
-commits are fetched from its `origin` without switching the development checkout.
-Their development checkouts are preserved. The committed release inputs must
-match the local inputs; the remote worker checks this before compiling. The
-local `Cargo.lock` is transferred into each isolated build checkout so every
-builder uses the same dependency snapshot with `--locked`. Builds
-continue in the background if an SSH connection closes, with their job/log paths
-reported locally. A failed host does not stop the other selected builds.
-
-The command collects only verified `orbit.node` and `release.json` pairs into
-`prebuilds/`. Per-host logs and the combined result are under `target/build-all/`.
-It prepares artifacts; publication remains the separate step below.
-
-The scripts validate the target binary header, source digest and checksum for
-all declared targets. This does not replace loading and testing each binary on
-its intended operating system. If your fork supports a different target set,
-update `native.js`, the explicit `package.json` file list and the release tests
-together before preparing it.
-
-Check the assembled release, then inspect the npm publication preview:
-
-```sh
-npm run check:package
-bash scripts/publish.sh --dry-run
-```
-
-Authenticate with npm using an account authorized for **your package name**.
-Once the preview is correct, publish explicitly:
-
-```sh
-bash scripts/publish.sh --publish
-```
-
-The script checks the prepared targets, copies only the explicit package file
-list into a temporary directory, and installs `npm/README.md` there as the
-package's `README.md`. It removes source-only npm scripts from that package and
-cleans the temporary directory after success or failure. The repository README
-is never replaced. Direct `npm pack` and `npm publish` from the source checkout
-are blocked by lifecycle hooks; use the release script so the correct README
-and checks are applied.
-
-Native receipts, build scripts and local notes are excluded from the npm
-package. Keep credentials and environment-specific release configuration in
-ignored local files; do not place them in either public README.
-
-MIT licensed.
-
 ## HTTP response cancellation
 
 Each HTTP exchange observes response-reader departure even while the Fetch
@@ -229,18 +96,15 @@ Normal request-upload EOF and successful response completion are not cancellatio
 The native `waitClosed()` method reports cancellation separately from successful
 completion; its observer uses the output owner's readiness registration.
 
-This requires a rebuilt native addon matching the JavaScript adapter. Message
-sessions retain their separate close and lifecycle handling. Cancellation is
-observable when the edge releases the response reader; network disconnect
+Message sessions retain their separate close and lifecycle handling. Cancellation
+is observable when the edge releases the response reader; network disconnect
 propagation also depends on the HTTP transport and its connection policy.
 
-## Application-owned invoke support (unreleased)
+## Application-owned invokes
 
-The source adapter now provides `link.invocations(options)`, backed by Claviron's
-existing invoke Client/Route/Driver. Rebuild your native addon together with the
-JavaScript adapter before using it; previously prepared binaries do not expose
-this API. See the [consumer API example](npm/README.md#application-owned-invokes-unreleased)
-for the HTTP/invoke handlers and explicit bounds.
+`link.invocations(options)` opens invokes on its own Link. See the
+[package guide](npm/README.md#application-owned-invokes) for the handlers and
+explicit bounds.
 
 The invoke connection uses a separate fleet from the HTTP/event connection.
 It shares the application's JavaScript process, event loop and existing native
@@ -249,28 +113,18 @@ engine, framework, private wire protocol or request timeout is introduced.
 Generation retirement uses native cancellation wakes, so it does not depend on
 a JavaScript lifecycle callback running first.
 
-Run the wrapper regressions with `npm test`. For the real Node/Rust acceptance
-harness, install the `orbit` CLI for test-segment cleanup, then run:
+Native invoke correctness has been verified on Linux x86-64 with Node and Deno.
+Bun native invoke behavior has not been validated.
 
-```sh
-python3 scripts/test-invoke.py
-# Reuse an already completed workspace/all-features/all-targets debug build:
-python3 scripts/test-invoke.py --skip-build
-# Run the same fixture with Deno instead of the default Node runtime:
-python3 scripts/test-invoke.py --skip-build --runtime deno
-# Invoke wrapper regressions can run directly under Deno too:
-deno test tests/invoke.test.js
-```
+## Benchmarks
 
-This harness starts only its own processes, uses fresh application and invoke
-fleet names, and removes their shared-memory segments after both processes
-exit. Results are written under ignored `.local/`. It checks bidirectional
-binary calls, typed errors, accepted-call and response bounds, HTTP progress
-under invoke saturation, caller cancellation without remote rollback,
-generation retirement in both directions, ignored late responses, stable
-endpoints and graceful nested-call drain. It is a correctness test, not a load
-test. Both runtime choices run the same HTTP/invoke fixture and Rust peer;
-the result records the runtime version and application PID. Native acceptance
-has been verified on Linux x86-64 with Node 26.12.1 and Deno 2.9.8.
-Deno also passes all seven invoke wrapper regressions. Bun native invoke
-behavior has not been validated.
+[Edge and Orbit application benchmarks](https://github.com/claviron/claviron/blob/main/examples/BENCHMARKS.md)
+include Node.js, Deno and Bun handlers served through Claviron Edge and Orbit
+Link, alongside native Rust controls and Python/PHP application paths.
+
+The report records hardware, runtime versions, worker and lane counts,
+throughput, p99 latency and errors for plain-text and JSON requests. macOS
+ARM64 and Linux x86-64 campaigns are documented separately with their
+configurations.
+
+MIT licensed.
