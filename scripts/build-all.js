@@ -37,7 +37,7 @@ export function selectHosts(config, selected = []) {
 async function transfer(host, result, context, root, log) {
   const temporary = await mkdtemp(join(root, "prebuilds", `.build-${host.target}-`));
   try {
-    const child = spawn("rsync", ["-rt", "--protect-args", "--include=/orbit.node", "--include=/release.json", "--exclude=*", "--",
+    const child = spawn("rsync", ["-rt", "--protect-args", "-e", "ssh -o ConnectionAttempts=3", "--include=/orbit.node", "--include=/release.json", "--exclude=*", "--",
       `${host.ssh}:${result.directory}/`, temporary + "/"], { cwd: root, stdio: ["ignore", log, log] });
     const [code, signal] = await once(child, "close");
     if (code !== 0) throw new Error(`Artifact transfer failed (${signal ?? code})`);
@@ -73,7 +73,7 @@ export async function buildAll(hosts, { root = repository, dryRun = false } = {}
       const bootstrap = `set -eu; set -o pipefail; ${git} cat-file -e ${quote(revision + "^{commit}")} 2>/dev/null || ${git} fetch --no-tags origin ${revision}; ` +
         `${git} show ${quote(revision + ":scripts/build-worker.js")} | node --input-type=module - ${encoded}`;
       const remote = `bash -l -c ${quote(bootstrap)}`;
-      const child = spawn("ssh", ["-T", "-o", "BatchMode=yes", "--", host.ssh, remote], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn("ssh", ["-T", "-o", "BatchMode=yes", "-o", "ConnectionAttempts=3", "--", host.ssh, remote], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
       const closed = once(child, "close");
       child.stdin.on("error", () => {});
       child.stdout.pipe(log, { end: false });
