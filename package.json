@@ -1,6 +1,6 @@
 {
   "name": "@claviron/orbit",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "Serve a Deno, Node or Bun application behind a Claviron edge over Orbit Link",
   "type": "module",
   "main": "index.js",

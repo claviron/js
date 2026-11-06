@@ -1,6 +1,6 @@
 [package]
 name = "orbit-js"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 publish = true
 description = "Serve a Deno, Node or Bun application behind a Claviron edge over Orbit Link"
