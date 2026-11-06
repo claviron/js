@@ -6,7 +6,9 @@
 //! cargo run --example edge -- <fleet> <name> <path> [<body>]
 //! ```
 
-use claviron::orbit::transport::{Exchange, HttpVersion, TransportClient};
+use claviron::orbit::link::application::{
+    ApplicationClient, Exchange, HttpVersion,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[tokio::main]
@@ -43,7 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    let client = TransportClient::join(&fleet, "orbit-js-edge", 1)?;
+    let client = ApplicationClient::join(&fleet, "orbit-js-edge", 1)?;
     if !client.serves(&name) {
         client.leave();
         return Err(

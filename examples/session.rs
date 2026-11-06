@@ -3,8 +3,8 @@
 //!
 //! `cargo run --example session -- <fleet> <application> <h1|h2|h3>`
 
-use claviron::orbit::transport::{
-    Exchange, HttpVersion, Message, TransportClient, read_message,
+use claviron::orbit::link::application::{
+    ApplicationClient, Exchange, HttpVersion, Message, read_message,
     write_message,
 };
 use tokio::io::AsyncWriteExt;
@@ -23,7 +23,7 @@ async fn main() -> Result<(), Error> {
         Some("h3") => HttpVersion::Http3,
         _ => return Err(usage.into()),
     };
-    let client = TransportClient::join(&fleet, "session-probe", 1)?;
+    let client = ApplicationClient::join(&fleet, "session-probe", 1)?;
     if !client.serves(&application) {
         client.leave();
         return Err("application has not joined the fleet".into());
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Error> {
 }
 
 async fn roundtrip(
-    client: &TransportClient,
+    client: &ApplicationClient,
     application: &str,
     version: HttpVersion,
 ) -> Result<(), Error> {

@@ -20,7 +20,7 @@ default = []
 napi = ["dep:napi", "dep:napi-derive"]
 
 [dependencies]
-claviron = { version = "0.2.0-alpha.24", default-features = false, features = ["orbit", "application"] }
+claviron = { version = "0.2.0-alpha.25", default-features = false, features = ["orbit", "application"] }
 napi = { version = "3.15", optional = true, default-features = false, features = ["napi8", "async", "tokio_rt", "serde-json"] }
 serde_json = "1"
 napi-derive = { version = "3.6.13", optional = true }

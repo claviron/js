@@ -11,7 +11,7 @@ use claviron::app::{
     APPLICATION_EVENT_TOPIC, ApplicationEvent, ApplicationId, ApplicationName,
     ApplicationRuntime, EventValue, link_routing_key,
 };
-use claviron::orbit::transport::EDGE_RUNTIME;
+use claviron::orbit::link::application::EDGE_RUNTIME;
 use claviron::orbit::{ApplicationEventLayout, FleetEventCodec};
 use claviron::orbitive::Fleet;
 use claviron::orbitive::events::FleetEventBus;

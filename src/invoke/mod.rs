@@ -78,10 +78,10 @@ impl Invocations {
         lifecycle: Arc<Lifecycle>,
         stop: CancellationToken,
     ) -> Result<Arc<Self>> {
-        use claviron::orbit::transport::TRANSPORT_LINK_SPEC;
+        use claviron::orbit::link::application::LINK_SPEC;
         options
             .limits
-            .validate(TRANSPORT_LINK_SPEC.inbox.payload_capacity)
+            .validate(LINK_SPEC.inbox.payload_capacity)
             .map_err(crate::failure)?;
         if options.limits.accepted_calls > tokio::sync::Semaphore::MAX_PERMITS {
             return Err(invalid(
@@ -90,7 +90,7 @@ impl Invocations {
         }
         let connection = Connection::open(
             &options.fleet,
-            TRANSPORT_LINK_SPEC,
+            LINK_SPEC,
             &options.service,
             "invoke",
             crate::INCARNATION,

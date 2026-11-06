@@ -24,8 +24,8 @@ use claviron::app::{
     ApplicationDescription, ApplicationId, ApplicationLifecycle,
     ApplicationName, ApplicationRuntime,
 };
+use claviron::orbit::link::application::ApplicationSegment;
 use claviron::orbit::service::{FleetMember, FleetMemberRole};
-use claviron::orbit::transport::TransportSegment;
 use tokio::sync::mpsc;
 
 use crate::RUNTIME;
@@ -49,7 +49,7 @@ pub struct ControlEvent {
 
 pub(crate) struct Lifecycle {
     description: ApplicationDescription,
-    segment: Arc<TransportSegment>,
+    segment: Arc<ApplicationSegment>,
     name: String,
     lane: u16,
     state: Mutex<State>,
@@ -60,7 +60,7 @@ pub(crate) struct Lifecycle {
 
 impl Lifecycle {
     pub(crate) fn new(
-        segment: Arc<TransportSegment>,
+        segment: Arc<ApplicationSegment>,
         name: &str,
         lane: u16,
         frameworks: Vec<String>,

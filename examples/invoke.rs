@@ -1,11 +1,11 @@
 //! Separate invoke Link, existing HTTP application Link, and real JavaScript/Node-API endpoints.
 use claviron::orbit::{
     invoke::{CallError, Client, Failure},
-    link::{Connection, invoke::Limits},
-    transport::{
-        ControlCommand, ControlTarget, Exchange, TRANSPORT_BUFFER_BYTES,
-        TRANSPORT_LINK_SPEC, TransportClient,
+    link::application::{
+        ApplicationClient, ControlCommand, ControlTarget, Exchange,
+        LINK_BUFFER_BYTES, LINK_SPEC,
     },
+    link::{Connection, invoke::Limits},
 };
 use std::{future::Future, io::Write, sync::Arc, task::Poll};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -28,7 +28,7 @@ async fn command(
     Ok(())
 }
 async fn http(
-    client: &TransportClient,
+    client: &ApplicationClient,
     status: u16,
 ) -> Result<()> {
     let pending = client.send(
@@ -54,7 +54,7 @@ async fn http(
     Ok(())
 }
 fn action(
-    client: &TransportClient,
+    client: &ApplicationClient,
     name: &str,
 ) -> Result<()> {
     client.command(&ControlCommand {
@@ -84,9 +84,9 @@ async fn main() -> Result<()> {
     if args.len() != 2 {
         return Err("usage: invoke <application-fleet> <invoke-fleet>".into());
     }
-    let bound = TRANSPORT_BUFFER_BYTES * 2;
+    let bound = LINK_BUFFER_BYTES * 2;
     let connection =
-        Connection::open(&args[1], TRANSPORT_LINK_SPEC, "rust", "invoke", 21)?;
+        Connection::open(&args[1], LINK_SPEC, "rust", "invoke", 21)?;
     let segment = Arc::clone(connection.segment());
     let limits = Limits {
         pending_calls: 4,
@@ -99,10 +99,8 @@ async fn main() -> Result<()> {
     let mut client = Client::new();
     client.register("js", handle.route("js")?)?;
     let client = Arc::new(client);
-    let first =
-        Connection::open(&args[1], TRANSPORT_LINK_SPEC, "dupe", "invoke", 31)?;
-    let second =
-        Connection::open(&args[1], TRANSPORT_LINK_SPEC, "dupe", "invoke", 32)?;
+    let first = Connection::open(&args[1], LINK_SPEC, "dupe", "invoke", 31)?;
+    let second = Connection::open(&args[1], LINK_SPEC, "dupe", "invoke", 32)?;
     let (gate_send, mut gates) = mpsc::channel::<oneshot::Sender<Vec<u8>>>(4);
     let stop = CancellationToken::new();
     let stopping = stop.clone();
@@ -146,7 +144,7 @@ async fn main() -> Result<()> {
         .await
     });
     ready.await?;
-    let http_client = TransportClient::join(&args[0], "http-peer", 1)?;
+    let http_client = ApplicationClient::join(&args[0], "http-peer", 1)?;
     signal(&format!("PEER_READY {bound}"))?;
     let mut input = BufReader::new(tokio::io::stdin()).lines();
     command(&mut input, "run").await?;

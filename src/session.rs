@@ -1,7 +1,9 @@
 //! Application message IO over the shared Link record protocol.
 
 use crate::{Error, ErrorKind, Result, abandoned, failure};
-use claviron::orbit::transport::{Message, MessageReader, write_message};
+use claviron::orbit::link::application::{
+    Message, MessageReader, write_message,
+};
 use claviron::orbitive::stream::{ReadHalf, WriteHalf};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{Mutex, watch};

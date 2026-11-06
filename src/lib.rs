@@ -22,7 +22,7 @@ mod lifecycle;
 mod session;
 use ErrorKind as Status;
 pub use cells::{Cell, CellValue, Cells};
-pub use claviron::orbit::transport::Message;
+pub use claviron::orbit::link::application::Message;
 pub use error::{Error, ErrorKind, Result};
 pub use events::DeliveredEvent;
 pub use lifecycle::ControlEvent;
@@ -39,10 +39,10 @@ pub mod __private {
     pub use serde_json;
 }
 
-use claviron::orbit::transport::{
-    ControlCommand, Exchange as ExchangeFrame, ExchangeReply, FrameKind,
-    Received, ShutdownNotice, TRANSPORT_FLEET_CAPACITY, Ticket,
-    TransportBodies, TransportSegment, frame_kind,
+use claviron::orbit::link::application::{
+    ApplicationBodies, ApplicationSegment, ControlCommand,
+    Exchange as ExchangeFrame, ExchangeReply, FrameKind, LINK_FLEET_CAPACITY,
+    Received, ShutdownNotice, Ticket, frame_kind,
 };
 use claviron::orbitive::link::InboxReceiver;
 use claviron::orbitive::shm::LaneHold;
@@ -74,11 +74,11 @@ pub struct JoinOptions {
 
 /// This process's place in a Link fleet.
 pub struct Link {
-    segment: Arc<TransportSegment>,
+    segment: Arc<ApplicationSegment>,
     fleet: Box<str>,
     shutdown: tokio_util::sync::CancellationToken,
     invokes: tokio::sync::Mutex<Vec<Arc<invoke::Invocations>>>,
-    bodies: Arc<TransportBodies>,
+    bodies: Arc<ApplicationBodies>,
     lane: u32,
     hold: Mutex<Option<LaneHold>>,
     receiver: tokio::sync::Mutex<Option<InboxReceiver>>,
@@ -100,12 +100,13 @@ pub struct Link {
 
 /// Take a lane in `fleet` under `name` and start reading it.
 pub async fn join(options: JoinOptions) -> Result<Link> {
-    let segment =
-        Arc::new(TransportSegment::for_fleet(&options.fleet).map_err(failure)?);
+    let segment = Arc::new(
+        ApplicationSegment::for_fleet(&options.fleet).map_err(failure)?,
+    );
     let joined =
         segment.join(&options.name, RUNTIME, INCARNATION).map_err(failure)?;
     let bodies = Arc::new(
-        TransportBodies::for_fleet(&options.fleet, joined.lane, INCARNATION)
+        ApplicationBodies::for_fleet(&options.fleet, joined.lane, INCARNATION)
             .map_err(failure)?,
     );
     bodies.reclaimed(&joined.reclaimed);
@@ -117,7 +118,7 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     // differently; an orbit-js application keeps a fleet of its own.
     let node = u16::try_from(joined.lane)
         .map_err(|_| failure("the lane does not fit a fleet node"))?;
-    let capacity = u16::try_from(TRANSPORT_FLEET_CAPACITY)
+    let capacity = u16::try_from(LINK_FLEET_CAPACITY)
         .map_err(|_| failure("the fleet capacity does not fit u16"))?;
     let fleet = Arc::new(
         Fleet::join_shm_as(&options.fleet, capacity, NodeId::new(node))
@@ -405,7 +406,7 @@ impl Link {
 
 /// One request and the means to answer it.
 pub struct Exchange {
-    segment: Arc<TransportSegment>,
+    segment: Arc<ApplicationSegment>,
     correlation: u64,
     origin: u16,
     ticket: Option<Ticket>,
@@ -428,8 +429,8 @@ pub struct Exchange {
 impl Exchange {
     fn new(
         exchange: ExchangeFrame,
-        segment: Arc<TransportSegment>,
-        bodies: &TransportBodies,
+        segment: Arc<ApplicationSegment>,
+        bodies: &ApplicationBodies,
     ) -> Result<Self> {
         let (incoming, outgoing) = match exchange.body {
             Some(ticket) => {
@@ -452,7 +453,7 @@ impl Exchange {
         let url = url(&exchange, &headers);
         let session_kind = exchange.upgrade.then_some(
             if exchange.version
-                == claviron::orbit::transport::HttpVersion::Http3
+                == claviron::orbit::link::application::HttpVersion::Http3
             {
                 "webtransport"
             } else {
