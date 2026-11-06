@@ -31,7 +31,10 @@ async function build(job) {
     }
     const env = { ...process.env, CARGO_TARGET_DIR: join(request.cache, "target") };
     if (request.jobs !== undefined) env.CARGO_BUILD_JOBS = String(request.jobs);
-    const args = ["scripts/publish.sh", "--prepare", "--target", nativeTargets[request.target]];
+    const args = request.docker
+      ? ["scripts/prepare-freebsd.sh"]
+      : ["scripts/publish.sh", "--prepare", "--target", nativeTargets[request.target]];
+    if (request.dockerNetwork !== undefined) env.CLAVIRON_FREEBSD_BUILD_NETWORK = request.dockerNetwork;
     if (request.nice === undefined) await command("bash", args, { cwd: source, env });
     else await command("nice", ["-n", String(request.nice), "bash", ...args], { cwd: source, env });
     const directory = join(source, "prebuilds", request.target);

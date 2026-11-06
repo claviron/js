@@ -7,9 +7,10 @@
       "jobs": 2
     },
     "freebsd": {
-      "ssh": "build-freebsd",
+      "ssh": "build-linux",
       "repository": "/srv/source/js",
       "target": "freebsd-x64",
+      "docker": true,
       "jobs": 2
     }
   }

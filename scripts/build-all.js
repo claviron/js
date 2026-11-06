@@ -27,6 +27,8 @@ export function selectHosts(config, selected = []) {
     if (!Object.hasOwn(nativeTargets, host.target)) throw new Error(`${name}: unknown release target`);
     if (host.jobs !== undefined && (!Number.isSafeInteger(host.jobs) || host.jobs < 1)) throw new Error(`${name}: jobs must be a positive integer`);
     if (host.nice !== undefined && (!Number.isInteger(host.nice) || host.nice < -20 || host.nice > 19)) throw new Error(`${name}: nice must be between -20 and 19`);
+    if (host.docker !== undefined && (typeof host.docker !== "boolean" || (host.docker && host.target !== "freebsd-x64"))) throw new Error(`${name}: docker is a boolean, for the freebsd-x64 target only`);
+    if (host.dockerNetwork !== undefined && !/^[A-Za-z0-9_.-]+$/.test(host.dockerNetwork)) throw new Error(`${name}: dockerNetwork must name a Docker network`);
     if (host.cache !== undefined && (typeof host.cache !== "string" || !host.cache.startsWith("/") || /[\0\r\n]/.test(host.cache))) throw new Error(`${name}: cache must be an absolute remote path`);
     return { ...host, name };
   });
@@ -67,7 +69,8 @@ export async function buildAll(hosts, { root = repository, dryRun = false } = {}
     let started;
     try {
       const request = { repository: host.repository, target: host.target, jobs: host.jobs,
-        nice: host.nice, cache: host.cache, revision, context, dependencyLock };
+        nice: host.nice, cache: host.cache, docker: host.docker, dockerNetwork: host.dockerNetwork,
+        revision, context, dependencyLock };
       const encoded = Buffer.from(JSON.stringify(request)).toString("base64");
       const git = `git -C ${quote(host.repository)}`;
       const bootstrap = `set -eu; set -o pipefail; ${git} cat-file -e ${quote(revision + "^{commit}")} 2>/dev/null || ${git} fetch --no-tags origin ${revision}; ` +
