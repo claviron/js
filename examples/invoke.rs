@@ -40,9 +40,8 @@ async fn http(
             headers: vec![(b"host".to_vec(), b"example.test".to_vec())],
             ..Default::default()
         },
-        false,
     )?;
-    let (_upload, mut response, reply) = pending.split();
+    let (_upload, mut response, reply, _) = pending.split();
     if reply.head().await?.status != status {
         return Err("HTTP status changed during invoke work".into());
     }

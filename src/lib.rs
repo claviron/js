@@ -40,11 +40,10 @@ pub mod __private {
 }
 
 use claviron::orbit::link::application::{
-    ApplicationBodies, ApplicationSegment, ControlCommand,
+    ApplicationBodies, ApplicationReceiver, ApplicationSegment, ControlCommand,
     Exchange as ExchangeFrame, ExchangeReply, FrameKind, LINK_FLEET_CAPACITY,
     Received, ShutdownNotice, Ticket, frame_kind,
 };
-use claviron::orbitive::link::InboxReceiver;
 use claviron::orbitive::shm::LaneHold;
 use claviron::orbitive::stream::{ReadHalf, WriteHalf};
 use claviron::orbitive::{Fleet, NodeId};
@@ -81,7 +80,7 @@ pub struct Link {
     bodies: Arc<ApplicationBodies>,
     lane: u32,
     hold: Mutex<Option<LaneHold>>,
-    receiver: tokio::sync::Mutex<Option<InboxReceiver>>,
+    receiver: tokio::sync::Mutex<Option<ApplicationReceiver>>,
     /// Set by `close()`. A `next()` parked on the lane watches it too, so a
     /// close ends that wait at once instead of waiting for a frame.
     closed: tokio::sync::watch::Sender<bool>,
@@ -110,7 +109,8 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
             .map_err(failure)?,
     );
     bodies.reclaimed(&joined.reclaimed);
-    let receiver = segment.receiver(joined.lane).map_err(failure)?;
+    let receiver =
+        segment.application_receiver(joined.lane).map_err(failure)?;
     // This process's lane index is its node in the fleet: a lane is held by
     // one live process, so the index is unique while it lives — what the
     // Link's "forwarded once, at its origin" rule and per-node rings need. A
@@ -217,15 +217,19 @@ impl Link {
                 _ = closed.changed() => return Ok(None),
             };
             match received {
-                Received::Frame => {}
+                Received::Frame | Received::Work(_) => {}
                 Received::Event => {
                     self.events.accept(&frame);
                     continue;
                 }
                 // Directory changes come in a later milestone; reading past
                 // them keeps the lane flowing.
-                Received::Directory(_) => continue,
+                Received::Directory(_) | Received::Capacity(_) => continue,
             }
+            let admission = self
+                .segment
+                .accept_frame(self.lane as usize, received, &frame)
+                .map_err(failure)?;
             match frame_kind(&frame) {
                 Ok(FrameKind::Request) => {}
                 Ok(FrameKind::Control) => {
@@ -242,21 +246,31 @@ impl Link {
                 }
                 _ => continue,
             }
-            let Ok(exchange) = ExchangeFrame::decode(&frame) else {
+            let Ok(exchange) = ExchangeFrame::decode(
+                tokio_util::bytes::Bytes::from(std::mem::take(&mut frame)),
+            ) else {
                 continue;
             };
+            if admission
+                .as_ref()
+                .is_some_and(|(origin, _)| *origin != exchange.origin as usize)
+            {
+                self.refuse(exchange, 400).await;
+                continue;
+            }
             if !self.lifecycle.running() {
                 // The application is stopped; the process and its lane are
                 // not. Answer without running the handler.
                 self.refuse(exchange, 503).await;
                 continue;
             }
-            return Exchange::new(
+            let mut exchange = Exchange::new(
                 exchange,
                 Arc::clone(&self.segment),
                 &self.bodies,
-            )
-            .map(Some);
+            )?;
+            exchange._admission = admission.map(|(_, work)| work);
+            return Ok(Some(exchange));
         }
     }
 
@@ -406,6 +420,7 @@ impl Link {
 
 /// One request and the means to answer it.
 pub struct Exchange {
+    _admission: Option<claviron::orbit::link::application::WorkExecution>,
     segment: Arc<ApplicationSegment>,
     correlation: u64,
     origin: u16,
@@ -414,6 +429,8 @@ pub struct Exchange {
     url: String,
     headers: Vec<Vec<String>>,
     has_body: bool,
+    inline: tokio::sync::Mutex<tokio_util::bytes::Bytes>,
+    streamed: bool,
     session_kind: Option<&'static str>,
     http_version: &'static str,
     session: std::sync::OnceLock<session::Session>,
@@ -432,7 +449,7 @@ impl Exchange {
         segment: Arc<ApplicationSegment>,
         bodies: &ApplicationBodies,
     ) -> Result<Self> {
-        let (incoming, outgoing) = match exchange.body {
+        let (incoming, outgoing) = match exchange.stream {
             Some(ticket) => {
                 let (read, write) =
                     bodies.accept(ticket).map_err(failure)?.split();
@@ -460,7 +477,20 @@ impl Exchange {
                 "websocket"
             },
         );
-        let has_body = incoming.is_some();
+        let has_body = !matches!(
+            exchange.body,
+            claviron::orbit::link::application::ExchangeBody::Empty
+        );
+        let streamed = matches!(
+            exchange.body,
+            claviron::orbit::link::application::ExchangeBody::Stream
+        );
+        let inline = match &exchange.body {
+            claviron::orbit::link::application::ExchangeBody::Inline(bytes) => {
+                bytes.clone()
+            }
+            _ => tokio_util::bytes::Bytes::new(),
+        };
         let incoming = Arc::new(tokio::sync::Mutex::new(incoming));
         let aborted = tokio::sync::watch::Sender::new(false);
         let (http, outgoing) = if session_kind.is_none() {
@@ -476,14 +506,17 @@ impl Exchange {
             (None, outgoing)
         };
         Ok(Self {
+            _admission: None,
             segment,
             correlation: exchange.correlation,
             origin: exchange.origin,
-            ticket: exchange.body,
+            ticket: exchange.stream,
             method: exchange.method,
             url,
             headers,
             has_body,
+            streamed,
+            inline: tokio::sync::Mutex::new(inline),
             session_kind,
             http_version: exchange.version.as_str(),
             session: std::sync::OnceLock::new(),
@@ -550,6 +583,18 @@ impl Exchange {
     /// The next piece of the request body, or `null` at its end.
     pub async fn read(&self) -> Result<Option<Vec<u8>>> {
         self.require_http()?;
+        let mut inline = self.inline.lock().await;
+        if *self.aborted.borrow() {
+            return Err(abandoned());
+        }
+        if !inline.is_empty() {
+            let length = inline.len().min(READ_CHUNK);
+            return Ok(Some(inline.split_to(length).to_vec()));
+        }
+        if !self.streamed {
+            return Ok(None);
+        }
+        drop(inline);
         http::read(&self.incoming, &self.aborted).await
     }
 
@@ -593,7 +638,11 @@ impl Exchange {
                     _ => None,
                 })
                 .collect(),
-            body: self.ticket,
+            body: if self.ticket.is_some() {
+                claviron::orbit::link::application::ExchangeBody::Stream
+            } else {
+                claviron::orbit::link::application::ExchangeBody::Empty
+            },
         };
         let frame = reply.encode().map_err(failure)?;
         self.segment

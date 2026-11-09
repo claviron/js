@@ -6,6 +6,7 @@
 //! cargo run --example edge -- <fleet> <name> <path> [<body>]
 //! ```
 
+use claviron::orbit::link::application::ExchangeBody;
 use claviron::orbit::link::application::{
     ApplicationClient, Exchange, HttpVersion,
 };
@@ -52,8 +53,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             format!("nothing serves '{name}' in fleet '{fleet}'").into()
         );
     }
-    let pending = client.send(&name, request, body.is_some())?;
-    let (mut request_body, mut response_body, reply) = pending.split();
+    let pending = client.send(
+        &name,
+        claviron::orbit::link::application::Exchange {
+            body: if body.is_some() {
+                ExchangeBody::Stream
+            } else {
+                ExchangeBody::Empty
+            },
+            ..request
+        },
+    )?;
+    let (mut request_body, mut response_body, reply, _) = pending.split();
     if let Some(body) = &body {
         request_body.write_all(body.as_bytes()).await?;
         request_body.shutdown().await?;

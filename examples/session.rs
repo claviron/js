@@ -3,6 +3,7 @@
 //!
 //! `cargo run --example session -- <fleet> <application> <h1|h2|h3>`
 
+use claviron::orbit::link::application::ExchangeBody;
 use claviron::orbit::link::application::{
     ApplicationClient, Exchange, HttpVersion, Message, read_message,
     write_message,
@@ -47,24 +48,26 @@ async fn roundtrip(
 ) -> Result<(), Error> {
     let pending = client.send(
         application,
-        Exchange {
-            method: if version == HttpVersion::Http11 {
-                "GET"
-            } else {
-                "CONNECT"
+        claviron::orbit::link::application::Exchange {
+            body: ExchangeBody::Stream,
+            ..Exchange {
+                method: if version == HttpVersion::Http11 {
+                    "GET"
+                } else {
+                    "CONNECT"
+                }
+                .into(),
+                version,
+                scheme: "https".into(),
+                path: "/echo".into(),
+                raw_path: b"/echo".to_vec(),
+                headers: vec![(b"host".to_vec(), b"example.test".to_vec())],
+                upgrade: true,
+                ..Default::default()
             }
-            .into(),
-            version,
-            scheme: "https".into(),
-            path: "/echo".into(),
-            raw_path: b"/echo".to_vec(),
-            headers: vec![(b"host".to_vec(), b"example.test".to_vec())],
-            upgrade: true,
-            ..Default::default()
         },
-        true,
     )?;
-    let (mut output, mut input, reply) = pending.split();
+    let (mut output, mut input, reply, _) = pending.split();
     let head = reply.head().await?;
     // The edge translates this internal acknowledgment to the native response.
     if head.status != 101 {
