@@ -26,6 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         });
     let client = ApplicationClient::join(&fleet, "claviron-js-control", 1)?;
     let sent = client.command(&ControlCommand {
+        origin: Some(client.lane() as u16),
         application: name.clone(),
         name: command.clone(),
         payload: payload.into_bytes(),

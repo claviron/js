@@ -410,7 +410,8 @@ async function reply(exchange, response, controller, stopped, abort) {
   signal.addEventListener("abort", cancel, { once: true });
   try {
     if (signal.aborted) { cancel(); return; }
-    exchange.respond(response.status, [...response.headers]);
+    await exchange.respond(response.status, [...response.headers]);
+    if (signal.aborted) return;
     if (reader) {
       for (;;) {
         const piece = await Promise.race([reader.read(), stopped]);

@@ -96,6 +96,10 @@ Normal request-upload EOF and successful response completion are not cancellatio
 The native `waitClosed()` method reports cancellation separately from successful
 completion; its observer uses the output owner's readiness registration.
 
+Response heads follow native producer backpressure. The Fetch adapter awaits
+publication before body writes; low-level native callers must await `respond()`
+as well. Intake and application events continue while a response waits.
+
 Message sessions retain their separate close and lifecycle handling. Cancellation
 is observable when the edge releases the response reader; network disconnect
 propagation also depends on the HTTP transport and its connection policy.

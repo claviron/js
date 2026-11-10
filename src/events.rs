@@ -75,9 +75,7 @@ impl Events {
         let driving = Arc::clone(&events.bridge);
         let forwarding = tokio::spawn(async move {
             if let Err(error) = driving.drive().await {
-                eprintln!(
-                    "orbit: events stopped crossing the Link: {error}"
-                );
+                eprintln!("orbit: events stopped crossing the Link: {error}");
             }
         });
         let reading = tokio::spawn(Arc::clone(&events).read_ring());

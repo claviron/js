@@ -226,12 +226,12 @@ macro_rules! export_bindings {
                         .map_err(failure)
                 }
                 #[napi]
-                pub fn respond(
+                pub async fn respond(
                     &self,
                     status: u16,
                     headers: Vec<Vec<String>>,
                 ) -> Result<()> {
-                    self.inner.respond(status, headers).map_err(failure)
+                    self.inner.respond(status, headers).await.map_err(failure)
                 }
                 #[napi]
                 pub async fn write(

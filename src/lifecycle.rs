@@ -114,9 +114,7 @@ impl Lifecycle {
                 return;
             }
             if state.apply(action).is_err() {
-                eprintln!(
-                    "orbit: application generation identity exhausted"
-                );
+                eprintln!("orbit: application generation identity exhausted");
                 return;
             }
             self.running.store(state.running, Ordering::Release);
@@ -128,7 +126,7 @@ impl Lifecycle {
             payload: None,
             edge: None,
         });
-        self.publish_state();
+        self.publish_state(None);
     }
 
     pub(crate) fn command(
@@ -160,7 +158,10 @@ impl Lifecycle {
 
     /// Tell the edges in this fleet what this instance hosts, in the same
     /// rows a runner reports, so the linked-application view shows it.
-    pub(crate) fn publish_state(&self) {
+    pub(crate) fn publish_state(
+        &self,
+        to: Option<usize>,
+    ) {
         let Some(id) = self.id() else { return };
         let now = SystemTime::now();
         let state = self.state.lock().expect("application generation");
@@ -199,8 +200,9 @@ impl Lifecycle {
         };
         match encode_link_snapshot_rows(&snapshot, member) {
             Ok(rows) => {
-                if let Err(error) =
-                    self.segment.publish_application_state(&self.name, &rows)
+                if let Err(error) = self
+                    .segment
+                    .publish_application_state(&self.name, &rows, to)
                 {
                     eprintln!(
                         "orbit: application state was not reported: {error}"

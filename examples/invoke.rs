@@ -57,6 +57,7 @@ fn action(
     name: &str,
 ) -> Result<()> {
     client.command(&ControlCommand {
+        origin: Some(client.lane() as u16),
         application: "demo".into(),
         name: name.into(),
         payload: vec![],

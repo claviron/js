@@ -117,3 +117,23 @@ test("failed response construction retires the exchange and its observer", async
   await f.finished;
   assert.equal(f.calls.observers, 0);
 });
+
+test("body output waits for native reply-head publication", async () => {
+  const entered = Promise.withResolvers();
+  const released = Promise.withResolvers();
+  const ctx = fixture({
+    async respond() {
+      entered.resolve();
+      await released.promise;
+    },
+  });
+  const serving = ctx.serve(() => new Response("ok"));
+  await entered.promise;
+  assert.deepEqual(ctx.calls.writes, []);
+  assert.equal(ctx.calls.ends, 0);
+  released.resolve();
+  await ctx.finished;
+  await serving;
+  assert.equal(Buffer.concat(ctx.calls.writes).toString(), "ok");
+  assert.equal(ctx.calls.ends, 1);
+});

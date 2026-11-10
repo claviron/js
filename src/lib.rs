@@ -41,8 +41,8 @@ pub mod __private {
 
 use claviron::orbit::link::application::{
     ApplicationBodies, ApplicationReceiver, ApplicationSegment, ControlCommand,
-    Exchange as ExchangeFrame, ExchangeReply, FrameKind, LINK_FLEET_CAPACITY,
-    Received, ShutdownNotice, Ticket, frame_kind,
+    Exchange as ExchangeFrame, ExchangeReply, FrameKind, Received,
+    ShutdownNotice, Ticket, frame_kind,
 };
 use claviron::orbitive::shm::LaneHold;
 use claviron::orbitive::stream::{ReadHalf, WriteHalf};
@@ -105,7 +105,7 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     let joined =
         segment.join(&options.name, RUNTIME, INCARNATION).map_err(failure)?;
     let bodies = Arc::new(
-        ApplicationBodies::for_fleet(&options.fleet, joined.lane, INCARNATION)
+        ApplicationBodies::for_segment(&segment, joined.lane, INCARNATION)
             .map_err(failure)?,
     );
     bodies.reclaimed(&joined.reclaimed);
@@ -118,8 +118,7 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     // differently; an claviron-js application keeps a fleet of its own.
     let node = u16::try_from(joined.lane)
         .map_err(|_| failure("the lane does not fit a fleet node"))?;
-    let capacity = u16::try_from(LINK_FLEET_CAPACITY)
-        .map_err(|_| failure("the fleet capacity does not fit u16"))?;
+    let capacity = segment.spec().fleet_capacity;
     let fleet = Arc::new(
         Fleet::join_shm_as(&options.fleet, capacity, NodeId::new(node))
             .map_err(failure)?,
@@ -384,7 +383,7 @@ impl Link {
         }
         match command.name.as_str() {
             "status" if command.target.is_none() => {
-                self.lifecycle.publish_state()
+                self.lifecycle.publish_state(command.origin.map(usize::from))
             }
             "start" | "stop" | "restart" => {
                 let ours = command.target.as_ref().is_some_and(|target| {
@@ -536,7 +535,7 @@ impl Exchange {
         &self,
         status: u16,
     ) -> bool {
-        if self.respond(status, Vec::new()).is_err() {
+        if self.try_publish_head(status).is_err() {
             return false;
         }
         if let Some(http) = &self.http {
@@ -599,7 +598,7 @@ impl Exchange {
     }
 
     /// Send the reply head to the edge worker that asked. Once only.
-    pub fn respond(
+    pub async fn respond(
         &self,
         status: u16,
         headers: Vec<Vec<String>>,
@@ -610,14 +609,14 @@ impl Exchange {
                 "use acceptSession to accept a message session",
             ));
         }
-        self.publish_head(status, headers)
+        self.publish_head(status, headers).await
     }
 
-    fn publish_head(
+    fn encode_head(
         &self,
         status: u16,
         headers: Vec<Vec<String>>,
-    ) -> Result<()> {
+    ) -> Result<Vec<u8>> {
         let mut replied = self.replied.lock().expect("reply flag");
         if *replied {
             return Err(Error::new(
@@ -645,12 +644,70 @@ impl Exchange {
             },
         };
         let frame = reply.encode().map_err(failure)?;
-        self.segment
-            .inbox()
-            .write(self.origin as usize, &frame)
-            .map_err(failure)?;
         *replied = true;
-        Ok(())
+        Ok(frame)
+    }
+
+    // Refusals run on intake: never park the control/event reader for reply space.
+    fn try_publish_head(
+        &self,
+        status: u16,
+    ) -> Result<()> {
+        let frame = self.encode_head(status, Vec::new())?;
+        self.segment
+            .publish_reply(self.origin as usize, &[&frame])
+            .map_err(failure)
+    }
+
+    async fn publish_head(
+        &self,
+        status: u16,
+        headers: Vec<Vec<String>>,
+    ) -> Result<()> {
+        if self.http.is_some() {
+            self.publish_head_on(status, headers, &mut None).await
+        } else {
+            let mut outgoing = self.outgoing.lock().await;
+            self.publish_head_on(status, headers, &mut outgoing).await
+        }
+    }
+
+    async fn publish_head_on(
+        &self,
+        status: u16,
+        headers: Vec<Vec<String>>,
+        outgoing: &mut Option<WriteHalf>,
+    ) -> Result<()> {
+        use claviron::orbit::link::application::Error as LinkError;
+
+        let frame = self.encode_head(status, headers)?;
+        let mut stopped = None;
+        loop {
+            if *self.aborted.borrow() {
+                return Err(abandoned());
+            }
+            match self.segment.publish_reply(self.origin as usize, &[&frame]) {
+                Ok(()) => return Ok(()),
+                Err(LinkError::ProducerBusy) => {
+                    let stopped =
+                        stopped.get_or_insert_with(|| self.aborted.subscribe());
+                    if *stopped.borrow_and_update() {
+                        return Err(abandoned());
+                    }
+                    tokio::select! {
+                        biased;
+                        _ = stopped.changed() => return Err(abandoned()),
+                        _ = async {
+                            if let Some(http) = &self.http { http.closed().await; }
+                            else if let Some(output) = outgoing { let _ = output.peer_closed().await; }
+                            else { std::future::pending::<()>().await; }
+                        } => return Err(abandoned()),
+                        result = self.segment.record_released() => { result.map_err(failure)?; },
+                    }
+                }
+                Err(error) => return Err(failure(error)),
+            }
+        }
     }
 
     /// Write a piece of the reply body.
@@ -679,7 +736,7 @@ impl Exchange {
     pub async fn abort(&self) {
         if let Some(http) = &self.http {
             // Publish a refusal before cancellation when no head was sent.
-            if self.respond(503, Vec::new()).is_ok() {
+            if self.try_publish_head(503).is_ok() {
                 let _ = http.finish().await;
             } else {
                 http.abort().await;
@@ -732,13 +789,13 @@ impl Exchange {
                 "message session has no duplex slot",
             ));
         }
+        self.publish_head_on(101, headers, &mut outgoing).await?;
         let session = session::Session::new(
             incoming.take().unwrap(),
             outgoing.take().unwrap(),
             max_message_bytes,
             self.aborted.clone(),
         );
-        self.publish_head(101, headers)?;
         self.session.set(session).map_err(|_| abandoned())?;
         drop(outgoing);
         drop(incoming);
@@ -762,7 +819,7 @@ impl Exchange {
                 "session rejection requires an HTTP error or redirect status",
             ));
         }
-        self.respond(status, headers)?;
+        self.respond(status, headers).await?;
         self.incoming.lock().await.take();
         if let Some(mut outgoing) = self.outgoing.lock().await.take() {
             outgoing.shutdown().await.map_err(failure)?;
