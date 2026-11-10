@@ -13,6 +13,7 @@
 
 use std::sync::{Arc, Mutex};
 
+mod admission;
 mod cells;
 mod error;
 mod events;
@@ -31,6 +32,9 @@ pub use lifecycle::ControlEvent;
 mod bindings;
 
 #[cfg(feature = "napi")]
+pub mod execution;
+
+#[cfg(feature = "napi")]
 #[doc(hidden)]
 pub mod __private {
     pub use crate::cells::integer_number;
@@ -41,8 +45,8 @@ pub mod __private {
 
 use claviron::orbit::link::application::{
     ApplicationBodies, ApplicationReceiver, ApplicationSegment, ControlCommand,
-    Exchange as ExchangeFrame, ExchangeReply, FrameKind, Received,
-    ShutdownNotice, Ticket, frame_kind,
+    Exchange as ExchangeFrame, ExchangeReply, FrameKind, Offered, Received,
+    ShutdownNotice, Ticket, WorkQueue, frame_kind,
 };
 use claviron::orbitive::shm::LaneHold;
 use claviron::orbitive::stream::{ReadHalf, WriteHalf};
@@ -60,6 +64,7 @@ const INCARNATION: u64 = 1;
 /// buffer bounds what is there to take.
 const READ_CHUNK: usize = 64 * 1024;
 
+#[derive(Default)]
 pub struct JoinOptions {
     /// The Link fleet the edge routes to.
     pub fleet: String,
@@ -69,6 +74,10 @@ pub struct JoinOptions {
     pub frameworks: Vec<String>,
     /// Symbolic admin-client icon code; unknown codes fall back in the client.
     pub icon: Option<String>,
+    /// Running exchanges. None with no max_waiting preserves unbounded admission.
+    pub max_in_flight: Option<usize>,
+    /// Running plus queued exchanges; required with max_in_flight.
+    pub max_waiting: Option<usize>,
 }
 
 /// This process's place in a Link fleet.
@@ -80,7 +89,7 @@ pub struct Link {
     bodies: Arc<ApplicationBodies>,
     lane: u32,
     hold: Mutex<Option<LaneHold>>,
-    receiver: tokio::sync::Mutex<Option<ApplicationReceiver>>,
+    receiver: tokio::sync::Mutex<Option<Intake>>,
     /// Set by `close()`. A `next()` parked on the lane watches it too, so a
     /// close ends that wait at once instead of waiting for a frame.
     closed: tokio::sync::watch::Sender<bool>,
@@ -95,15 +104,52 @@ pub struct Link {
     delivered: tokio::sync::Mutex<
         tokio::sync::mpsc::UnboundedReceiver<events::DeliveredEvent>,
     >,
+    completed: tokio::sync::mpsc::UnboundedSender<()>,
+    bounded: bool,
+    active: Arc<admission::Active>,
+}
+
+struct Intake {
+    receiver: ApplicationReceiver,
+    queue: WorkQueue,
+    finished: tokio::sync::mpsc::UnboundedReceiver<()>,
+    ready:
+        std::collections::VecDeque<claviron::orbit::link::application::Start>,
 }
 
 /// Take a lane in `fleet` under `name` and start reading it.
 pub async fn join(options: JoinOptions) -> Result<Link> {
+    let config = claviron::orbit::config::LinkConfig {
+        max_in_flight: options.max_in_flight,
+        max_waiting: options.max_waiting,
+        ..Default::default()
+    };
+    config
+        .validate()
+        .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
+    if options.max_in_flight.is_none() && options.max_waiting.is_some() {
+        return Err(Error::new(
+            Status::InvalidArg,
+            "max_waiting needs max_in_flight",
+        ));
+    }
     let segment = Arc::new(
         ApplicationSegment::for_fleet(&options.fleet).map_err(failure)?,
     );
-    let joined =
-        segment.join(&options.name, RUNTIME, INCARNATION).map_err(failure)?;
+    let joined = segment
+        .join_with_capacity(
+            &options.name,
+            RUNTIME,
+            INCARNATION,
+            options.max_waiting,
+        )
+        .map_err(failure)?;
+    if let Some(limit) = options.max_in_flight {
+        if let Err(error) = segment.set_work_execution(joined.lane, limit) {
+            let _ = segment.inbox().release_lane(joined.lane);
+            return Err(failure(error));
+        }
+    }
     let bodies = Arc::new(
         ApplicationBodies::for_segment(&segment, joined.lane, INCARNATION)
             .map_err(failure)?,
@@ -111,6 +157,14 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     bodies.reclaimed(&joined.reclaimed);
     let receiver =
         segment.application_receiver(joined.lane).map_err(failure)?;
+    let (completed, finished) = tokio::sync::mpsc::unbounded_channel();
+    let bounded = options.max_in_flight.is_some();
+    let receiver = Intake {
+        receiver,
+        queue: WorkQueue::new(),
+        finished,
+        ready: Default::default(),
+    };
     // This process's lane index is its node in the fleet: a lane is held by
     // one live process, so the index is unique while it lives — what the
     // Link's "forwarded once, at its origin" rule and per-node rings need. A
@@ -159,6 +213,9 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
         cells,
         cells_unavailable,
         delivered: tokio::sync::Mutex::new(delivered),
+        completed,
+        bounded,
+        active: Arc::new(admission::Active::default()),
     })
 }
 
@@ -199,7 +256,7 @@ impl Link {
         self.lane
     }
 
-    /// The next request, or `null` once the link is closed.
+    /// The next runnable request. Queued work never blocks event/control intake.
     pub async fn next(&self) -> Result<Option<Exchange>> {
         let mut closed = self.closed.subscribe();
         if *closed.borrow_and_update() {
@@ -208,68 +265,127 @@ impl Link {
         let mut held = self.receiver.lock().await;
         let mut frame = Vec::new();
         loop {
-            let Some(receiver) = held.as_mut() else {
-                return Ok(None);
-            };
-            let received = tokio::select! {
-                received = receiver.next(&mut frame) => received.map_err(failure)?,
-                _ = closed.changed() => return Ok(None),
-            };
-            match received {
-                Received::Frame | Received::Work(_) => {}
-                Received::Event => {
-                    self.events.accept(&frame);
-                    continue;
-                }
-                // Directory changes come in a later milestone; reading past
-                // them keeps the lane flowing.
-                Received::Directory(_) | Received::Capacity(_) => continue,
-            }
-            let admission = self
-                .segment
-                .accept_frame(self.lane as usize, received, &frame)
-                .map_err(failure)?;
-            match frame_kind(&frame) {
-                Ok(FrameKind::Request) => {}
-                Ok(FrameKind::Control) => {
-                    if let Ok(command) = ControlCommand::decode(&frame) {
-                        self.control(command);
+            let Some(intake) = held.as_mut() else { return Ok(None) };
+            let ready = if let Some(ready) = intake.ready.pop_front() {
+                Some(ready)
+            } else {
+                let received = tokio::select! {
+                    biased;
+                    _ = closed.changed() => return Ok(None),
+                    completed = intake.finished.recv(), if self.bounded => {
+                        if completed.is_some() {
+                            if let Some(start) = intake.queue.finished(&self.segment, self.lane as usize) { intake.ready.push_back(start); }
+                        }
+                        continue;
                     }
-                    continue;
-                }
-                Ok(FrameKind::ShutdownInitiated) => {
-                    if let Ok(notice) = ShutdownNotice::decode(&frame) {
-                        self.lifecycle.edge_shutdown(notice.edge);
+                    received = intake.receiver.next(&mut frame) => received.map_err(failure)?,
+                };
+                match received {
+                    Received::Event => {
+                        self.events.accept(&frame);
+                        continue;
                     }
-                    continue;
+                    Received::Directory(_) | Received::Capacity(_) => continue,
+                    Received::Frame | Received::Work(_) => {}
                 }
-                _ => continue,
-            }
-            let Ok(exchange) = ExchangeFrame::decode(
-                tokio_util::bytes::Bytes::from(std::mem::take(&mut frame)),
-            ) else {
+                match frame_kind(&frame) {
+                    Ok(FrameKind::Request) => {}
+                    Ok(FrameKind::Control) => {
+                        let _credit = self
+                            .segment
+                            .accept_frame(self.lane as usize, received, &frame)
+                            .map_err(failure)?;
+                        if let Ok(command) = ControlCommand::decode(&frame) {
+                            self.control(command);
+                        }
+                        continue;
+                    }
+                    Ok(FrameKind::ShutdownInitiated) => {
+                        let _credit = self
+                            .segment
+                            .accept_frame(self.lane as usize, received, &frame)
+                            .map_err(failure)?;
+                        if let Ok(notice) = ShutdownNotice::decode(&frame) {
+                            self.lifecycle.edge_shutdown(notice.edge);
+                        }
+                        continue;
+                    }
+                    _ => {
+                        let _ = self.segment.accept_frame(
+                            self.lane as usize,
+                            received,
+                            &frame,
+                        );
+                        continue;
+                    }
+                }
+                if self.bounded {
+                    match intake
+                        .queue
+                        .offer(
+                            &self.segment,
+                            self.lane as usize,
+                            received,
+                            &mut frame,
+                        )
+                    {
+                        Ok(Offered::Held) => continue,
+                        Ok(Offered::Start(start)) => Some(start),
+                        // A sender may withdraw after publishing but before
+                        // intake accepts its reservation. Only that request
+                        // has ended; this lane continues serving its peers.
+                        Err(claviron::orbit::link::application::Error::StaleWork) => continue,
+                        Err(error) => return Err(failure(error)),
+                    }
+                } else {
+                    let admission = self
+                        .segment
+                        .accept_frame(self.lane as usize, received, &frame)
+                        .map_err(failure)?;
+                    Some((std::mem::take(&mut frame), admission))
+                }
+            };
+            let Some((frame, admission)) = ready else { continue };
+            let origin = admission.as_ref().map(|(origin, _)| *origin);
+            // Move the real execution token into its terminal owner.
+            let credit = Some(admission::Completion::new(
+                admission.map(|(_, work)| work),
+                self.bounded.then(|| self.completed.clone()),
+                Arc::clone(&self.active),
+            ));
+            let Ok(exchange) =
+                ExchangeFrame::decode(tokio_util::bytes::Bytes::from(frame))
+            else {
+                if let Some(credit) = credit {
+                    credit.release();
+                }
                 continue;
             };
-            if admission
-                .as_ref()
-                .is_some_and(|(origin, _)| *origin != exchange.origin as usize)
-            {
+            if origin.is_some_and(|origin| origin != exchange.origin as usize) {
                 self.refuse(exchange, 400).await;
+                if let Some(credit) = credit {
+                    credit.release();
+                }
                 continue;
             }
             if !self.lifecycle.running() {
-                // The application is stopped; the process and its lane are
-                // not. Answer without running the handler.
                 self.refuse(exchange, 503).await;
+                if let Some(credit) = credit {
+                    credit.release();
+                }
                 continue;
             }
-            let mut exchange = Exchange::new(
+            // The caller may cancel between publication and stream acceptance.
+            // That exchange ends; it must not tear down this application lane.
+            match Exchange::new(
                 exchange,
                 Arc::clone(&self.segment),
                 &self.bodies,
-            )?;
-            exchange._admission = admission.map(|(_, work)| work);
-            return Ok(Some(exchange));
+                credit,
+            ) {
+                Ok(exchange) => return Ok(Some(exchange)),
+                Err(_) => continue,
+            }
         }
     }
 
@@ -280,6 +396,9 @@ impl Link {
         self.shutdown.cancel();
         self.receiver.lock().await.take();
         let _ = self.segment.inbox().release_lane(self.lane as usize);
+        // Intake is closed, but accepted bodies/sessions retain exact process
+        // ownership until their terminal native owner has completed.
+        self.active.drain().await;
         drop(self.hold.lock().expect("lane hold").take());
         let children = self.invokes.lock().await.clone();
         for child in children {
@@ -409,9 +528,12 @@ impl Link {
         exchange: ExchangeFrame,
         status: u16,
     ) {
-        if let Ok(refused) =
-            Exchange::new(exchange, Arc::clone(&self.segment), &self.bodies)
-        {
+        if let Ok(refused) = Exchange::new(
+            exchange,
+            Arc::clone(&self.segment),
+            &self.bodies,
+            None,
+        ) {
             refused.refuse(status).await;
         }
     }
@@ -419,7 +541,7 @@ impl Link {
 
 /// One request and the means to answer it.
 pub struct Exchange {
-    _admission: Option<claviron::orbit::link::application::WorkExecution>,
+    admission: Option<Arc<admission::Completion>>,
     segment: Arc<ApplicationSegment>,
     correlation: u64,
     origin: u16,
@@ -442,11 +564,28 @@ pub struct Exchange {
     aborted: tokio::sync::watch::Sender<bool>,
 }
 
+impl Drop for Exchange {
+    fn drop(&mut self) {
+        // Foreign collection can abandon an unclosed session. Drop its raw
+        // halves before returning credit; HTTP's output driver owns its own
+        // terminal guard and completes independently of this wrapper.
+        let credit = self.admission.take();
+        self.session.take();
+        self.outgoing.get_mut().take();
+        if let Some(incoming) = Arc::get_mut(&mut self.incoming) {
+            incoming.get_mut().take();
+        }
+        self.http.take();
+        drop(credit);
+    }
+}
+
 impl Exchange {
     fn new(
         exchange: ExchangeFrame,
         segment: Arc<ApplicationSegment>,
         bodies: &ApplicationBodies,
+        admission: Option<Arc<admission::Completion>>,
     ) -> Result<Self> {
         let (incoming, outgoing) = match exchange.stream {
             Some(ticket) => {
@@ -494,10 +633,11 @@ impl Exchange {
         let aborted = tokio::sync::watch::Sender::new(false);
         let (http, outgoing) = if session_kind.is_none() {
             (
-                Some(http::Output::new(
+                Some(http::Output::with_admission(
                     outgoing,
                     Arc::clone(&incoming),
                     aborted.clone(),
+                    admission.clone(),
                 )),
                 None,
             )
@@ -505,7 +645,7 @@ impl Exchange {
             (None, outgoing)
         };
         Ok(Self {
-            _admission: None,
+            admission,
             segment,
             correlation: exchange.correlation,
             origin: exchange.origin,
@@ -746,12 +886,18 @@ impl Exchange {
         self.aborted.send_replace(true);
         if let Some(session) = self.session.get() {
             session.abort().await;
+            if let Some(credit) = &self.admission {
+                credit.release();
+            }
             return;
         }
         if !self.refuse(503).await
             && let Some(mut outgoing) = self.outgoing.lock().await.take()
         {
             outgoing.reset();
+        }
+        if let Some(credit) = &self.admission {
+            credit.release();
         }
     }
 
@@ -821,10 +967,16 @@ impl Exchange {
         }
         self.respond(status, headers).await?;
         self.incoming.lock().await.take();
-        if let Some(mut outgoing) = self.outgoing.lock().await.take() {
-            outgoing.shutdown().await.map_err(failure)?;
+        let result =
+            if let Some(mut outgoing) = self.outgoing.lock().await.take() {
+                outgoing.shutdown().await.map_err(failure)
+            } else {
+                Ok(())
+            };
+        if let Some(credit) = &self.admission {
+            credit.release();
         }
-        Ok(())
+        result
     }
 
     fn accepted_session(&self) -> Result<&session::Session> {
@@ -834,7 +986,14 @@ impl Exchange {
     }
 
     pub async fn receive_message(&self) -> Result<Option<Message>> {
-        self.accepted_session()?.receive().await
+        let result = self.accepted_session()?.receive().await;
+        if matches!(result, Ok(None) | Ok(Some(Message::Close { .. })) | Err(_))
+        {
+            if let Some(credit) = &self.admission {
+                credit.release();
+            }
+        }
+        result
     }
 
     pub async fn send_message(
@@ -855,7 +1014,11 @@ impl Exchange {
         code: u16,
         reason: &str,
     ) -> Result<()> {
-        self.accepted_session()?.close(code, reason).await
+        let result = self.accepted_session()?.close(code, reason).await;
+        if let Some(credit) = &self.admission {
+            credit.release();
+        }
+        result
     }
 }
 
@@ -889,3 +1052,7 @@ fn url(
 fn failure(error: impl std::fmt::Display) -> Error {
     Error::new(Status::GenericFailure, error.to_string())
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/intake.rs"]
+mod intake_tests;

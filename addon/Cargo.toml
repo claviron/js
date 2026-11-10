@@ -12,5 +12,8 @@ doctest = false
 [dependencies]
 claviron-js = { path = "..", features = ["napi"] }
 
+napi-derive = "3.6.13"
+napi = { version = "3.16.1", default-features = false, features = ["napi8", "async-runtime"] }
+
 [build-dependencies]
 napi-build = "2.6"

@@ -148,3 +148,31 @@ async fn dropping_the_wrapper_also_retires_the_driver() {
     }
     assert!(incoming.lock().await.is_none());
 }
+
+#[tokio::test]
+async fn finish_returns_admission_before_its_acknowledgement() {
+    let streams = Streams::with_spec(
+        Arc::new(Fleet::join("http-credit", 1).unwrap()),
+        Incarnation::new(1),
+        StreamSpec::new(246, 1, 256),
+    )
+    .unwrap();
+    let (_edge, ticket) = streams.create().unwrap();
+    let (input, output) = streams.open(ticket).unwrap().split();
+    let (finished, mut ended) = mpsc::unbounded_channel();
+    let credit = crate::admission::Completion::new(
+        None,
+        Some(finished),
+        Arc::new(crate::admission::Active::default()),
+    );
+    let output = Output::with_admission(
+        Some(output),
+        Arc::new(Mutex::new(Some(input))),
+        watch::Sender::new(false),
+        Some(Arc::clone(&credit)),
+    );
+    output.finish().await.unwrap();
+    assert!(ended.try_recv().is_ok());
+    credit.release();
+    assert!(ended.try_recv().is_err());
+}

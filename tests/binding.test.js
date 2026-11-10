@@ -65,3 +65,20 @@ test("custom binding carries streamed requests and replies through the shared ad
   assert.equal(head.status, 201);
   assert.equal(Buffer.concat(written).toString(), "from Rust");
 });
+
+test("admission is explicit, validated before join and passed without inventing limits", async () => {
+  const calls = [];
+  const orbit = createOrbit({ async join(options) { calls.push(options); return {}; } });
+  for (const capacity of [
+    { maxInFlight: 0, maxWaiting: 2 },
+    { maxInFlight: 1.5, maxWaiting: 2 },
+    { maxInFlight: 3, maxWaiting: 2 },
+    { maxInFlight: 1 },
+  ]) await assert.rejects(orbit.join({ fleet: "example", name: "app", frameworks: [], ...capacity }));
+  assert.equal(calls.length, 0);
+  await orbit.join({ fleet: "example", name: "app", frameworks: [], maxInFlight: 2, maxWaiting: 3 });
+  assert.equal(calls[0].maxInFlight, 2);
+  assert.equal(calls[0].maxWaiting, 3);
+  await orbit.join({ fleet: "example", name: "app", frameworks: [] });
+  assert.equal(calls[1].maxInFlight, undefined);
+});

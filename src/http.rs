@@ -27,20 +27,35 @@ pub(crate) struct Output {
 }
 
 impl Output {
+    #[cfg(test)]
     pub(crate) fn new(
         outgoing: Option<WriteHalf>,
         incoming: Arc<Mutex<Option<ReadHalf>>>,
         stopped: watch::Sender<bool>,
     ) -> Self {
+        Self::with_admission(outgoing, incoming, stopped, None)
+    }
+
+    pub(crate) fn with_admission(
+        outgoing: Option<WriteHalf>,
+        incoming: Arc<Mutex<Option<ReadHalf>>>,
+        stopped: watch::Sender<bool>,
+        admission: Option<Arc<crate::admission::Completion>>,
+    ) -> Self {
         let (commands, receiver) = mpsc::channel(1);
         let (terminal, state) = watch::channel(Terminal::Open);
-        tokio::spawn(drive(
-            outgoing,
-            incoming,
-            stopped.clone(),
-            receiver,
-            terminal,
-        ));
+        let driver_stop = stopped.clone();
+        tokio::spawn(async move {
+            drive(
+                outgoing,
+                incoming,
+                driver_stop,
+                receiver,
+                terminal,
+                crate::admission::TerminalGuard(admission),
+            )
+            .await;
+        });
         Self { commands, terminal: state, stopped }
     }
 
@@ -94,6 +109,7 @@ async fn drive(
     stopped: watch::Sender<bool>,
     mut commands: mpsc::Receiver<Command>,
     terminal: watch::Sender<Terminal>,
+    completion: crate::admission::TerminalGuard,
 ) {
     let mut cancelled = stopped.subscribe();
     let mut finished = None;
@@ -152,6 +168,8 @@ async fn drive(
     stopped.send_replace(true);
     drop(outgoing);
     incoming.lock().await.take();
+    // Credit is observable before completion or cancellation is acknowledged.
+    drop(completion);
     terminal.send_replace(state);
     if let Some((done, result)) = finished {
         let _ = done.send(result);

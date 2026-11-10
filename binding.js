@@ -19,6 +19,10 @@ export function createOrbit(native) {
   return Object.freeze({
     join: (options) => joinWith(native, options),
     serve: (options, handler) => serveWith(native, options, handler),
+    runtimeInfo: () => {
+      if (typeof native.runtimeInfo !== "function") throw new Error("This native module does not expose Orbit executor metadata.");
+      return native.runtimeInfo();
+    },
   });
 }
 
@@ -26,10 +30,20 @@ export function createOrbit(native) {
  * Take a lane in `fleet` under `name`. An explicit framework wins; otherwise
  * the application's package.json supplies management metadata at join.
  *
- * @param {{ fleet: string, name: string, frameworks?: string[], framework?: string, icon?: string }} options
+ * @param {{ fleet: string, name: string, maxInFlight?: number, maxWaiting?: number, frameworks?: string[], framework?: string, icon?: string }} options
  * @returns {Promise<Link>}
  */
 async function joinWith(native, options) {
+  for (const key of ["maxInFlight", "maxWaiting"]) {
+    const value = options[key];
+    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff)) {
+      throw new TypeError(`${key} must be a positive 32-bit integer.`);
+    }
+  }
+  if ((options.maxInFlight === undefined) !== (options.maxWaiting === undefined)) {
+    throw new TypeError("maxInFlight and maxWaiting must be declared together.");
+  }
+  if (options.maxInFlight > options.maxWaiting) throw new TypeError("maxInFlight must not exceed maxWaiting.");
   const frameworks = options.frameworks ?? (options.framework != null
     ? [options.framework] : await discoverFrameworks());
   return new Link(await native.join({ ...options, frameworks }));
@@ -239,8 +253,9 @@ export class Link {
   }
 
   /**
-   * Withdraw the lane and end message sessions. Await the promise returned by
-   * serve() to join accepted HTTP responses; close() does not abort them.
+   * Withdraw the lane, end message sessions and drain accepted native I/O.
+   * Await serve() as well to join JavaScript handlers; close() does not abort
+   * accepted HTTP responses.
    */
   close() {
     this.#closing ??= (async () => {
@@ -319,7 +334,7 @@ export class Link {
  * HTTP requests already taken still finish; accepted
  * message sessions reset so reads and backpressured writes can stop.
  *
- * @param {{ fleet: string, name: string, frameworks?: string[], framework?: string, icon?: string, signal?: AbortSignal, onSession?: (session: import("./session.js").Session) => Promise<void> }} options
+ * @param {{ fleet: string, name: string, maxInFlight?: number, maxWaiting?: number, frameworks?: string[], framework?: string, icon?: string, signal?: AbortSignal, onSession?: (session: import("./session.js").Session) => Promise<void> }} options
  * @param {(request: Request) => Response | Promise<Response>} handler
  */
 async function serveWith(native, options, handler) {
