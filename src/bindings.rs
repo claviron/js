@@ -46,7 +46,7 @@ macro_rules! export_bindings {
                 pub frameworks: Vec<String>,
                 pub icon: Option<String>,
                 pub max_in_flight: Option<u32>,
-                pub max_waiting: Option<u32>,
+                pub max_queued: Option<u32>,
             }
 
             #[napi]
@@ -59,9 +59,7 @@ macro_rules! export_bindings {
                     max_in_flight: options
                         .max_in_flight
                         .map(|value| value as usize),
-                    max_waiting: options
-                        .max_waiting
-                        .map(|value| value as usize),
+                    max_queued: options.max_queued.map(|value| value as usize),
                 })
                 .await
                 .map(|inner| Link { inner })

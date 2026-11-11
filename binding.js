@@ -30,20 +30,24 @@ export function createOrbit(native) {
  * Take a lane in `fleet` under `name`. An explicit framework wins; otherwise
  * the application's package.json supplies management metadata at join.
  *
- * @param {{ fleet: string, name: string, maxInFlight?: number, maxWaiting?: number, frameworks?: string[], framework?: string, icon?: string }} options
+ * @param {{ fleet: string, name: string, maxInFlight?: number, maxQueued?: number, frameworks?: string[], framework?: string, icon?: string }} options
  * @returns {Promise<Link>}
  */
 async function joinWith(native, options) {
-  for (const key of ["maxInFlight", "maxWaiting"]) {
+  if ("maxWaiting" in options) {
+    throw new TypeError("maxWaiting was replaced by maxQueued, which counts only waiting exchanges.");
+  }
+  for (const [key, minimum] of [["maxInFlight", 1], ["maxQueued", 0]]) {
     const value = options[key];
-    if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0 || value > 0xffffffff)) {
-      throw new TypeError(`${key} must be a positive 32-bit integer.`);
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < minimum || value > 0xffffffff)) {
+      throw new TypeError(key === "maxInFlight"
+        ? "maxInFlight must be a positive 32-bit integer."
+        : "maxQueued must be a non-negative 32-bit integer.");
     }
   }
-  if ((options.maxInFlight === undefined) !== (options.maxWaiting === undefined)) {
-    throw new TypeError("maxInFlight and maxWaiting must be declared together.");
+  if ((options.maxInFlight === undefined) !== (options.maxQueued === undefined)) {
+    throw new TypeError("maxInFlight and maxQueued must be declared together.");
   }
-  if (options.maxInFlight > options.maxWaiting) throw new TypeError("maxInFlight must not exceed maxWaiting.");
   const frameworks = options.frameworks ?? (options.framework != null
     ? [options.framework] : await discoverFrameworks());
   return new Link(await native.join({ ...options, frameworks }));
@@ -334,7 +338,7 @@ export class Link {
  * HTTP requests already taken still finish; accepted
  * message sessions reset so reads and backpressured writes can stop.
  *
- * @param {{ fleet: string, name: string, maxInFlight?: number, maxWaiting?: number, frameworks?: string[], framework?: string, icon?: string, signal?: AbortSignal, onSession?: (session: import("./session.js").Session) => Promise<void> }} options
+ * @param {{ fleet: string, name: string, maxInFlight?: number, maxQueued?: number, frameworks?: string[], framework?: string, icon?: string, signal?: AbortSignal, onSession?: (session: import("./session.js").Session) => Promise<void> }} options
  * @param {(request: Request) => Response | Promise<Response>} handler
  */
 async function serveWith(native, options, handler) {

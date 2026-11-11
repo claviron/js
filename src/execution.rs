@@ -27,12 +27,12 @@ impl RuntimeOptions {
         execution: Option<&str>,
         threads: Option<&str>,
     ) -> Result<Self, String> {
-        let execution = match execution.unwrap_or("multi_thread") {
-            "current_thread" => Execution::CurrentThread,
-            "multi_thread" => Execution::MultiThread,
+        let execution = match execution.unwrap_or("multi") {
+            "current" | "current_thread" => Execution::CurrentThread,
+            "multi" | "multi_thread" => Execution::MultiThread,
             _ => {
                 return Err(
-                    "ORBIT_JS_EXECUTION is current_thread or multi_thread"
+                    "ORBIT_JS_EXECUTION must be current or multi (inherit is reserved)"
                         .into(),
                 );
             }
@@ -49,7 +49,10 @@ impl RuntimeOptions {
             || execution == Execution::CurrentThread
                 && worker_threads.is_some_and(|count| count != 1)
         {
-            return Err("current_thread has one thread; multi_thread needs a positive thread count".into());
+            return Err(
+                "current has one thread; multi needs a positive thread count"
+                    .into(),
+            );
         }
         Ok(Self { execution, worker_threads })
     }
@@ -107,8 +110,8 @@ pub fn info() -> napi::Result<(String, u32)> {
         .as_ref()
         .ok_or_else(|| error("Orbit executor is not running"))?;
     let flavor = match driver.handle.runtime_flavor() {
-        tokio::runtime::RuntimeFlavor::CurrentThread => "current_thread",
-        tokio::runtime::RuntimeFlavor::MultiThread => "multi_thread",
+        tokio::runtime::RuntimeFlavor::CurrentThread => "current",
+        tokio::runtime::RuntimeFlavor::MultiThread => "multi",
         _ => "unknown",
     };
     Ok((flavor.into(), driver.handle.metrics().num_workers() as u32))

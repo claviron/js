@@ -23,7 +23,7 @@ async fn bounded_intake_promotes_on_terminal_io_and_drain_ignores_retained_wrapp
         fleet: fleet.clone(),
         name: "test".into(),
         max_in_flight: Some(1),
-        max_waiting: Some(2),
+        max_queued: Some(1),
         ..Default::default()
     })
     .await
@@ -66,7 +66,7 @@ async fn caller_departure_before_acceptance_does_not_end_intake() {
         fleet: fleet.clone(),
         name: "test".into(),
         max_in_flight: Some(1),
-        max_waiting: Some(2),
+        max_queued: Some(1),
         ..Default::default()
     })
     .await
@@ -89,7 +89,7 @@ async fn withdrawn_reservation_is_skipped_without_rejecting_next() {
         fleet: fleet.clone(),
         name: "test".into(),
         max_in_flight: Some(1),
-        max_waiting: Some(2),
+        max_queued: Some(1),
         ..Default::default()
     })
     .await

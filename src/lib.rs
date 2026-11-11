@@ -74,10 +74,10 @@ pub struct JoinOptions {
     pub frameworks: Vec<String>,
     /// Symbolic admin-client icon code; unknown codes fall back in the client.
     pub icon: Option<String>,
-    /// Running exchanges. None with no max_waiting preserves unbounded admission.
+    /// Running exchanges. None with no max_queued preserves unbounded admission.
     pub max_in_flight: Option<usize>,
-    /// Running plus queued exchanges; required with max_in_flight.
-    pub max_waiting: Option<usize>,
+    /// Waiting exchanges, excluding running work; required with max_in_flight.
+    pub max_queued: Option<usize>,
 }
 
 /// This process's place in a Link fleet.
@@ -105,7 +105,7 @@ pub struct Link {
         tokio::sync::mpsc::UnboundedReceiver<events::DeliveredEvent>,
     >,
     completed: tokio::sync::mpsc::UnboundedSender<()>,
-    bounded: bool,
+    queued: bool,
     active: Arc<admission::Active>,
 }
 
@@ -119,30 +119,30 @@ struct Intake {
 
 /// Take a lane in `fleet` under `name` and start reading it.
 pub async fn join(options: JoinOptions) -> Result<Link> {
-    let config = claviron::orbit::config::LinkConfig {
-        max_in_flight: options.max_in_flight,
-        max_waiting: options.max_waiting,
-        ..Default::default()
+    let window = match (options.max_in_flight, options.max_queued) {
+        (None, None) => None,
+        (Some(in_flight), Some(queued)) => {
+            let window = in_flight.checked_add(queued).filter(|window| {
+                in_flight > 0
+                    && *window < claviron::orbit::link::application::LINK_INBOX_CAPACITY
+            });
+            Some(window.ok_or_else(|| Error::new(
+                Status::InvalidArg,
+                "maxInFlight must be positive and maxInFlight + maxQueued must be below inbox capacity",
+            ))?)
+        }
+        _ => {
+            return Err(Error::new(
+                Status::InvalidArg,
+                "maxInFlight and maxQueued must be declared together.",
+            ));
+        }
     };
-    config
-        .validate()
-        .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
-    if options.max_in_flight.is_none() && options.max_waiting.is_some() {
-        return Err(Error::new(
-            Status::InvalidArg,
-            "max_waiting needs max_in_flight",
-        ));
-    }
     let segment = Arc::new(
         ApplicationSegment::for_fleet(&options.fleet).map_err(failure)?,
     );
     let joined = segment
-        .join_with_capacity(
-            &options.name,
-            RUNTIME,
-            INCARNATION,
-            options.max_waiting,
-        )
+        .join_with_capacity(&options.name, RUNTIME, INCARNATION, window)
         .map_err(failure)?;
     if let Some(limit) = options.max_in_flight {
         if let Err(error) = segment.set_work_execution(joined.lane, limit) {
@@ -158,7 +158,7 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
     let receiver =
         segment.application_receiver(joined.lane).map_err(failure)?;
     let (completed, finished) = tokio::sync::mpsc::unbounded_channel();
-    let bounded = options.max_in_flight.is_some();
+    let queued = options.max_queued.is_some_and(|limit| limit > 0);
     let receiver = Intake {
         receiver,
         queue: WorkQueue::new(),
@@ -214,7 +214,7 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
         cells_unavailable,
         delivered: tokio::sync::Mutex::new(delivered),
         completed,
-        bounded,
+        queued,
         active: Arc::new(admission::Active::default()),
     })
 }
@@ -272,7 +272,7 @@ impl Link {
                 let received = tokio::select! {
                     biased;
                     _ = closed.changed() => return Ok(None),
-                    completed = intake.finished.recv(), if self.bounded => {
+                    completed = intake.finished.recv(), if self.queued => {
                         if completed.is_some() {
                             if let Some(start) = intake.queue.finished(&self.segment, self.lane as usize) { intake.ready.push_back(start); }
                         }
@@ -319,7 +319,7 @@ impl Link {
                         continue;
                     }
                 }
-                if self.bounded {
+                if self.queued {
                     match intake
                         .queue
                         .offer(
@@ -338,11 +338,11 @@ impl Link {
                         Err(error) => return Err(failure(error)),
                     }
                 } else {
-                    let admission = self
-                        .segment
-                        .accept_frame(self.lane as usize, received, &frame)
-                        .map_err(failure)?;
-                    Some((std::mem::take(&mut frame), admission))
+                    match self.segment.accept_frame(self.lane as usize, received, &frame) {
+                        Ok(admission) => Some((std::mem::take(&mut frame), admission)),
+                        Err(claviron::orbit::link::application::Error::StaleWork) => continue,
+                        Err(error) => return Err(failure(error)),
+                    }
                 }
             };
             let Some((frame, admission)) = ready else { continue };
@@ -350,7 +350,7 @@ impl Link {
             // Move the real execution token into its terminal owner.
             let credit = Some(admission::Completion::new(
                 admission.map(|(_, work)| work),
-                self.bounded.then(|| self.completed.clone()),
+                self.queued.then(|| self.completed.clone()),
                 Arc::clone(&self.active),
             ));
             let Ok(exchange) =

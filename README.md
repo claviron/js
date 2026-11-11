@@ -44,16 +44,18 @@ been published in an npm release.
 The ready-to-load addon selects its native I/O executor before it is imported:
 
 ```sh
-ORBIT_JS_EXECUTION=current_thread node app.mjs
+ORBIT_JS_EXECUTION=current node app.mjs
 # Or select a multi-thread executor explicitly:
-ORBIT_JS_EXECUTION=multi_thread ORBIT_JS_WORKER_THREADS=4 node app.mjs
+ORBIT_JS_EXECUTION=multi ORBIT_JS_WORKER_THREADS=4 node app.mjs
 ```
 
-`current_thread` continuously drives one real Tokio current-thread runtime on
+`current` continuously drives one real Tokio current-thread runtime on
 an owned native thread. It does not change the JavaScript engine's scheduling.
-The default is `multi_thread`, using Tokio's worker-count configuration when
+The default is `multi`, using Tokio's worker-count configuration when
 `ORBIT_JS_WORKER_THREADS` is omitted. Current-thread mode permits only one
-worker. Invalid values reject native runtime initialization and are reported by
+worker. The long forms `current_thread` and `multi_thread` are also accepted.
+`inherit`, running Orbit I/O on the host's own loop, is reserved and unavailable.
+Invalid values reject native runtime initialization and are reported by
 `runtimeInfo()` or the first asynchronous native call. `runtimeInfo()` returns the
 actual native runtime flavor and worker count.
 
@@ -65,15 +67,15 @@ import { join, runtimeInfo } from "@claviron/orbit";
 console.log(runtimeInfo());
 const link = await join({
   fleet: "apps", name: "hello",
-  maxInFlight: 128, maxWaiting: 192,
+  maxInFlight: 128, maxQueued: 64,
 });
 await link.serve(() => new Response("Hello"));
 ```
 
-Both limits must be supplied together as positive integers.
-`maxInFlight` limits running exchanges; `maxWaiting` includes running and queued
-exchanges and must be at least `maxInFlight`. Values must fit the native Link
-geometry. Omitting both preserves unbounded admission. Queue promotion follows
+Declare both limits together. `maxInFlight` is positive and limits running
+exchanges. `maxQueued` counts waiting exchanges, with zero selecting direct
+intake. Their sum must be below the Link inbox capacity. Omitting both
+preserves unbounded admission. Queue promotion follows
 completion wakes; queued requests do not block event or lifecycle intake.
 Credits return when native response I/O finishes or is cancelled, even while a
 JavaScript wrapper remains reachable. A caller cancelling before stream
