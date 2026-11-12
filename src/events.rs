@@ -118,10 +118,13 @@ impl Events {
                 }
             }
             let Ok(mut guard) = ready.readable().await else { return };
+            // Clear before draining: a signal that lands after the
+            // drain is the only one until the next drain, and
+            // clearing after would erase it.
+            guard.clear_ready();
             if ready.get_ref().drain().is_err() {
                 return;
             }
-            guard.clear_ready();
         }
     }
 
