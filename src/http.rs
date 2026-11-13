@@ -163,9 +163,11 @@ async fn drive(
             }
             Some(Command::Finish(done)) => {
                 let result = match &mut outgoing {
-                    Some(output) => {
-                        output.finish().await.map_err(crate::failure)
-                    }
+                    Some(output) => tokio::select! {
+                        biased;
+                        _ = cancelled.changed() => Err(crate::abandoned()),
+                        result = output.finish() => result.map_err(crate::failure),
+                    },
                     None => Ok(()),
                 };
                 let state = if result.is_ok() {
