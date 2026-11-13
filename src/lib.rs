@@ -50,6 +50,7 @@ use claviron::orbit::link::application::{
 };
 use claviron::orbitive::shm::LaneHold;
 use claviron::orbitive::stream::{ReadHalf, WriteHalf};
+use claviron::orbit::link::application::body::ResponseWriter;
 use claviron::orbitive::{Fleet, NodeId};
 use tokio::io::AsyncWriteExt;
 
@@ -150,10 +151,14 @@ pub async fn join(options: JoinOptions) -> Result<Link> {
             return Err(failure(error));
         }
     }
-    let bodies = Arc::new(
-        ApplicationBodies::for_segment(&segment, joined.lane, INCARNATION)
-            .map_err(failure)?,
-    );
+    let bodies = (|| {
+        let mut bodies = ApplicationBodies::for_segment(&segment, joined.lane, INCARNATION)?;
+        bodies.prepare_http(&segment, joined.lane, INCARNATION)?;
+        Ok::<_, claviron::orbit::link::application::Error>(Arc::new(bodies))
+    })().map_err(|error| {
+        let _ = segment.inbox().release_lane(joined.lane);
+        failure(error)
+    })?;
     bodies.reclaimed(&joined.reclaimed);
     let receiver =
         segment.application_receiver(joined.lane).map_err(failure)?;
@@ -587,14 +592,7 @@ impl Exchange {
         bodies: &ApplicationBodies,
         admission: Option<Arc<admission::Completion>>,
     ) -> Result<Self> {
-        let (incoming, outgoing) = match exchange.stream {
-            Some(ticket) => {
-                let (read, write) =
-                    bodies.accept(ticket).map_err(failure)?.split();
-                (Some(read), Some(write))
-            }
-            None => (None, None),
-        };
+        let (incoming, outgoing) = bodies.accept_http(&exchange).map_err(failure)?;
         let headers: Vec<Vec<String>> = exchange
             .headers
             .iter()
@@ -642,6 +640,11 @@ impl Exchange {
                 None,
             )
         } else {
+            let outgoing = match outgoing {
+                Some(ResponseWriter::ByteStream(writer)) => Some(writer),
+                None => None,
+                Some(ResponseWriter::Payload(_)) => unreachable!("HTTP-only response ticket"),
+            };
             (None, outgoing)
         };
         Ok(Self {
@@ -679,6 +682,7 @@ impl Exchange {
             return false;
         }
         if let Some(http) = &self.http {
+            let _ = http.start().await;
             let _ = http.finish().await;
         } else {
             self.incoming.lock().await.take();
@@ -804,8 +808,9 @@ impl Exchange {
         status: u16,
         headers: Vec<Vec<String>>,
     ) -> Result<()> {
-        if self.http.is_some() {
-            self.publish_head_on(status, headers, &mut None).await
+        if let Some(http) = &self.http {
+            self.publish_head_on(status, headers, &mut None).await?;
+            http.start().await
         } else {
             let mut outgoing = self.outgoing.lock().await;
             self.publish_head_on(status, headers, &mut outgoing).await
@@ -877,6 +882,7 @@ impl Exchange {
         if let Some(http) = &self.http {
             // Publish a refusal before cancellation when no head was sent.
             if self.try_publish_head(503).is_ok() {
+                let _ = http.start().await;
                 let _ = http.finish().await;
             } else {
                 http.abort().await;

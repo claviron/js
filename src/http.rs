@@ -2,8 +2,9 @@
 
 use std::sync::Arc;
 
-use claviron::orbitive::stream::{ReadHalf, WriteHalf};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use claviron::orbit::link::application::body::ResponseWriter;
+use claviron::orbitive::stream::ReadHalf;
+use tokio::io::AsyncReadExt;
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -14,6 +15,7 @@ enum Terminal {
 }
 
 enum Command {
+    Start(oneshot::Sender<crate::Result<()>>),
     Write(Vec<u8>, oneshot::Sender<crate::Result<()>>),
     Finish(oneshot::Sender<crate::Result<()>>),
 }
@@ -29,15 +31,15 @@ pub(crate) struct Output {
 impl Output {
     #[cfg(test)]
     pub(crate) fn new(
-        outgoing: Option<WriteHalf>,
+        outgoing: Option<claviron::orbitive::stream::WriteHalf>,
         incoming: Arc<Mutex<Option<ReadHalf>>>,
         stopped: watch::Sender<bool>,
     ) -> Self {
-        Self::with_admission(outgoing, incoming, stopped, None)
+        Self::with_admission(outgoing.map(ResponseWriter::ByteStream), incoming, stopped, None)
     }
 
     pub(crate) fn with_admission(
-        outgoing: Option<WriteHalf>,
+        outgoing: Option<ResponseWriter>,
         incoming: Arc<Mutex<Option<ReadHalf>>>,
         stopped: watch::Sender<bool>,
         admission: Option<Arc<crate::admission::Completion>>,
@@ -57,6 +59,12 @@ impl Output {
             .await;
         });
         Self { commands, terminal: state, stopped }
+    }
+
+    pub(crate) async fn start(&self) -> crate::Result<()> {
+        let (done, result) = oneshot::channel();
+        self.commands.send(Command::Start(done)).await.map_err(|_| crate::abandoned())?;
+        result.await.map_err(|_| crate::abandoned())?
     }
 
     pub(crate) async fn write(
@@ -104,7 +112,7 @@ impl Output {
 }
 
 async fn drive(
-    mut outgoing: Option<WriteHalf>,
+    mut outgoing: Option<ResponseWriter>,
     incoming: Arc<Mutex<Option<ReadHalf>>>,
     stopped: watch::Sender<bool>,
     mut commands: mpsc::Receiver<Command>,
@@ -129,12 +137,21 @@ async fn drive(
             command = commands.recv() => command,
         };
         match command {
+            Some(Command::Start(done)) => {
+                let result = outgoing.as_mut().map_or(Ok(()), |output| output.start())
+                    .map_err(crate::failure);
+                let failed = result.is_err();
+                let _ = done.send(result);
+                if failed {
+                    break Terminal::Cancelled;
+                }
+            }
             Some(Command::Write(bytes, done)) => {
                 let result = match &mut outgoing {
                     Some(output) => tokio::select! {
                         biased;
                         _ = cancelled.changed() => Err(crate::abandoned()),
-                        result = output.write_all(&bytes) => result.map_err(crate::failure),
+                        result = output.write(&bytes) => result.map_err(crate::failure),
                     },
                     None => Err(crate::abandoned()),
                 };
@@ -147,7 +164,7 @@ async fn drive(
             Some(Command::Finish(done)) => {
                 let result = match &mut outgoing {
                     Some(output) => {
-                        output.shutdown().await.map_err(crate::failure)
+                        output.finish().await.map_err(crate::failure)
                     }
                     None => Ok(()),
                 };
@@ -166,6 +183,9 @@ async fn drive(
     // acknowledging completion, even if the JavaScript wrapper stays alive.
     commands.close();
     stopped.send_replace(true);
+    if state == Terminal::Cancelled && let Some(output) = outgoing.as_mut() {
+        output.reset();
+    }
     drop(outgoing);
     incoming.lock().await.take();
     // Credit is observable before completion or cancellation is acknowledged.

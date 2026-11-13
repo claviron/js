@@ -1,6 +1,6 @@
 {
   "name": "@claviron/orbit",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Serve a Deno, Node or Bun application behind a Claviron edge over Orbit Link",
   "repository": {
     "type": "git",

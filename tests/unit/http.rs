@@ -3,6 +3,7 @@ use claviron::orbitive::Fleet;
 use claviron::orbitive::stream::{Incarnation, StreamSpec, Streams};
 use std::future::{Future, poll_fn};
 use std::task::Poll;
+use tokio::io::AsyncWriteExt;
 
 type Input = Arc<Mutex<Option<ReadHalf>>>;
 
@@ -166,7 +167,7 @@ async fn finish_returns_admission_before_its_acknowledgement() {
         Arc::new(crate::admission::Active::default()),
     );
     let output = Output::with_admission(
-        Some(output),
+        Some(ResponseWriter::ByteStream(output)),
         Arc::new(Mutex::new(Some(input))),
         watch::Sender::new(false),
         Some(Arc::clone(&credit)),
