@@ -52,6 +52,7 @@ pub(crate) struct Lifecycle {
     segment: Arc<ApplicationSegment>,
     name: String,
     lane: u16,
+    pid: u32,
     state: Mutex<State>,
     // Keep HTTP admission lock-free; capture() synchronizes generation ownership.
     running: AtomicBool,
@@ -78,6 +79,7 @@ impl Lifecycle {
                 segment,
                 name: name.to_owned(),
                 lane,
+                pid: std::process::id(),
                 state: Mutex::new(State::initial()),
                 running: AtomicBool::new(true),
                 notify,
@@ -202,7 +204,7 @@ impl Lifecycle {
             Ok(rows) => {
                 if let Err(error) = self
                     .segment
-                    .publish_application_state(&self.name, &rows, to)
+                    .publish_application_state(&self.name, self.pid, &rows, to)
                 {
                     eprintln!(
                         "orbit: application state was not reported: {error}"

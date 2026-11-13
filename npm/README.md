@@ -6,7 +6,7 @@ Write a standard Fetch handler. Orbit connects it to Claviron through a native,
 same-host transport. Your application handles requests; the edge handles public
 HTTP connections and routing.
 
-This release targets Claviron `0.2.0-alpha.26`.
+This release targets Claviron `0.2.1`.
 
 - **Node, Deno or Bun:** use the runtime you already know.
 - **Standard web APIs:** work with `Request`, `Response` and streaming bodies.
